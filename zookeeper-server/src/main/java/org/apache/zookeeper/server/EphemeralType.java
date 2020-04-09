@@ -85,6 +85,7 @@ public enum EphemeralType {
 
         @Override
         public long toEphemeralOwner(long ttl) {
+            // 过期时间太大
             if ((ttl > TTL.maxValue()) || (ttl <= 0)) {
                 throw new IllegalArgumentException("ttl must be positive and cannot be larger than: " + TTL.maxValue());
             }
@@ -217,8 +218,10 @@ public enum EphemeralType {
     @SuppressFBWarnings(value = "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT", justification = "toEphemeralOwner may throw IllegalArgumentException")
     public static void validateTTL(CreateMode mode, long ttl) {
         if (mode.isTTL()) {
+            // TTL是个枚举
             TTL.toEphemeralOwner(ttl);
         } else if (ttl >= 0) {
+            // 如果不是ttl类型的节点
             throw new IllegalArgumentException("ttl not valid for mode: " + mode);
         }
     }

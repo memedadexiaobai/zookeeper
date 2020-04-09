@@ -1713,14 +1713,21 @@ public class ZooKeeper implements AutoCloseable {
         byte[] data,
         List<ACL> acl,
         CreateMode createMode) throws KeeperException, InterruptedException {
-        final String clientPath = path;
-        PathUtils.validatePath(clientPath, createMode.isSequential());
-        EphemeralType.validateTTL(createMode, -1);
-        validateACL(acl);
 
+
+        final String clientPath = path;
+        // 验证路径，顺序节点有点特殊，普通节点的路径最后一个字符不能为‘/’，但是顺序节点可以为‘/’
+        PathUtils.validatePath(clientPath, createMode.isSequential());
+        // 验证ttl
+        EphemeralType.validateTTL(createMode, -1);
+        // acl是否为空，为空会抛异常
+        validateACL(acl);
+        //
         final String serverPath = prependChroot(clientPath);
 
+        // 请求头
         RequestHeader h = new RequestHeader();
+        // 创建的是否是容器节点
         h.setType(createMode.isContainer() ? ZooDefs.OpCode.createContainer : ZooDefs.OpCode.create);
         CreateRequest request = new CreateRequest();
         CreateResponse response = new CreateResponse();
@@ -1728,7 +1735,10 @@ public class ZooKeeper implements AutoCloseable {
         request.setFlags(createMode.toFlag());
         request.setPath(serverPath);
         request.setAcl(acl);
+
+        //
         ReplyHeader r = cnxn.submitRequest(h, request, response, null);
+
         if (r.getErr() != 0) {
             throw KeeperException.create(KeeperException.Code.get(r.getErr()), clientPath);
         }

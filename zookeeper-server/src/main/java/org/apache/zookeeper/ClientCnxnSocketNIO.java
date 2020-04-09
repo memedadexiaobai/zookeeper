@@ -68,13 +68,16 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         if (sock == null) {
             throw new IOException("Socket is null!");
         }
+        // 当有数据可读时
         if (sockKey.isReadable()) {
+            // 把socket中的数据读入到incomingBuffer中
             int rc = sock.read(incomingBuffer);
             if (rc < 0) {
                 throw new EndOfStreamException("Unable to read additional data from server sessionid 0x"
                                                + Long.toHexString(sessionId)
                                                + ", likely server has closed socket");
             }
+            // 如果incomingBuffer没有剩余数据了
             if (!incomingBuffer.hasRemaining()) {
                 incomingBuffer.flip();
                 if (incomingBuffer == lenBuffer) {
@@ -93,6 +96,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     updateLastHeard();
                     initialized = true;
                 } else {
+                    // 从incomingBuffer中读取响应
                     sendThread.readResponse(incomingBuffer);
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
@@ -101,23 +105,35 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             }
         }
         if (sockKey.isWritable()) {
+            // 从outgoingQueue中获取队列的第一个Packet
             Packet p = findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress());
 
             if (p != null) {
                 updateLastSend();
+
                 // If we already started writing p, p.bb will already exist
+                // 如果Packet的bb没有内容
                 if (p.bb == null) {
                     if ((p.requestHeader != null)
                         && (p.requestHeader.getType() != OpCode.ping)
                         && (p.requestHeader.getType() != OpCode.auth)) {
+                        // 如果不是ping请求、auth请求，则设置一个xid，xid是一个自增的id，估计服务端会用到？
                         p.requestHeader.setXid(cnxn.getXid());
                     }
+                    // 把Packet所表示的请求内容，放入到bb中
                     p.createBB();
                 }
+
                 sock.write(p.bb);
+
+                // 如果bb中没有剩余数据了，表示数据都发送完了
                 if (!p.bb.hasRemaining()) {
                     sentCount.getAndIncrement();
+                    // packet中的数据都发送完了，就移除
                     outgoingQueue.removeFirstOccurrence(p);
+
+                    // 如果不是ping或auth请求，则把packet添加到pendingQueue中
+                    // 为什么还要把packet添加到pendingQueue中，因为需要等待结果
                     if (p.requestHeader != null
                         && p.requestHeader.getType() != OpCode.ping
                         && p.requestHeader.getType() != OpCode.auth) {
@@ -128,6 +144,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                 }
             }
             if (outgoingQueue.isEmpty()) {
+                // 如果没有可以发送的数据了，就暂时先不对写事件感兴趣了
                 // No more packets to send: turn off write interest flag.
                 // Will be turned on later by a later call to enableWrite(),
                 // from within ZooKeeperSaslClient (if client is configured
@@ -157,6 +174,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             return null;
         }
         // If we've already starting sending the first packet, we better finish
+        // 获取队列中第一个并返回，并不会把这个first从队列中移除
         if (outgoingQueue.getFirst().bb != null || !tunneledAuthInProgres) {
             return outgoingQueue.getFirst();
         }
@@ -254,6 +272,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
      * @throws IOException
      */
     void registerAndConnect(SocketChannel sock, InetSocketAddress addr) throws IOException {
+        // 注册一个CONNECT事件
         sockKey = sock.register(selector, SelectionKey.OP_CONNECT);
         boolean immediateConnect = sock.connect(addr);
         if (immediateConnect) {
@@ -327,7 +346,10 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         int waitTimeOut,
         Queue<Packet> pendingQueue,
         ClientCnxn cnxn) throws IOException, InterruptedException {
+        // 阻塞获取事件
         selector.select(waitTimeOut);
+
+        // 就绪事件
         Set<SelectionKey> selected;
         synchronized (this) {
             selected = selector.selectedKeys();
@@ -340,16 +362,22 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             SocketChannel sc = ((SocketChannel) k.channel());
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
                 if (sc.finishConnect()) {
+                    // socket连接成功后，进行一些连接初始化
                     updateLastSendAndHeard();
                     updateSocketAddresses();
                     sendThread.primeConnection();
                 }
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
+                // 当socket可以读或写数据时
+                // 当把一个packet发送给服务端后，会把这个packet添加到pendingQueue中
                 doIO(pendingQueue, cnxn);
             }
         }
+        // 连接中
         if (sendThread.getZkState().isConnected()) {
+            // 根据outgoingQueue来查找是否存在可以发送的数据包
             if (findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress()) != null) {
+                // 如果有，则注册写事件，表示感兴趣socket可以写数据的时候
                 enableWrite();
             }
         }

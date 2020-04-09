@@ -1,6 +1,7 @@
 package com.luban;
 
 import org.apache.zookeeper.*;
+import org.apache.zookeeper.data.ACL;
 
 import java.io.IOException;
 
@@ -15,7 +16,8 @@ public class ZookeeperTest {
         });
 
         // CreateMode有7种
-        zooKeeper.create("/luban", "123".getBytes(), null, CreateMode.PERSISTENT);
+        // acl不能为空，
+        zooKeeper.create("/luban123", "123".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
 
     }
 }
