@@ -52,6 +52,7 @@ abstract class ClientCnxnSocket {
 
     /**
      * This buffer is only used to read the length of the incoming message.
+     * 分配四个直接内存
      */
     protected final ByteBuffer lenBuffer = ByteBuffer.allocateDirect(4);
 
@@ -111,15 +112,19 @@ abstract class ClientCnxnSocket {
     }
 
     void updateLastSendAndHeard() {
+        // 最后一次发送数据时间
         this.lastSend = now;
+        // 最后一次接受数据时间
         this.lastHeard = now;
     }
 
     void readLength() throws IOException {
-        int len = incomingBuffer.getInt();
+        int len = incomingBuffer.getInt(); // 读4个字节的数据，前4个字节表示Packet的长度
+        // packetLen默认为1M，Packet的长度限制
         if (len < 0 || len >= packetLen) {
             throw new IOException("Packet len " + len + " is out of range!");
         }
+        // 分配一个数据包长度的buffer
         incomingBuffer = ByteBuffer.allocate(len);
     }
 
@@ -137,6 +142,7 @@ abstract class ClientCnxnSocket {
 
         ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
+        // 连接请求的响应结果
         ConnectResponse conRsp = new ConnectResponse();
         conRsp.deserialize(bbia, "connect");
 
@@ -149,8 +155,10 @@ abstract class ClientCnxnSocket {
             // doesn't contain readOnly field
             LOG.warn("Connected to an old server; r-o mode will be unavailable");
         }
-
+        // 拿到一个sessionId
         this.sessionId = conRsp.getSessionId();
+        // 针对连接请求，服务端已经返回了结果，现在客户端需要处理该结果
+        // 客户端在想服务端发送连接请求时就传了一个timeout，但是服务端可能有自己的timeout，所以响应结果里是服务端根据自己的考虑返回的timeout
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId, conRsp.getPasswd(), isRO);
     }
 

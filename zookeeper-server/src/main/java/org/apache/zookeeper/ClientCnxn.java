@@ -493,15 +493,19 @@ public class ClientCnxn {
             setDaemon(true);
         }
 
+        // 事件入队
         public void queueEvent(WatchedEvent event) {
             queueEvent(event, null);
         }
 
         private void queueEvent(WatchedEvent event, Set<Watcher> materializedWatchers) {
+            // 修改sessionState
             if (event.getType() == EventType.None && sessionState == event.getState()) {
                 return;
             }
             sessionState = event.getState();
+
+
             final Set<Watcher> watchers;
             if (materializedWatchers == null) {
                 // materialize the watchers based on the event
@@ -510,6 +514,9 @@ public class ClientCnxn {
                 watchers = new HashSet<Watcher>();
                 watchers.addAll(materializedWatchers);
             }
+            // WatcherSet表示监听器集合
+            // Event表示事件
+            // WatcherSetEventPair表示 监听器集合：Event的一个对应关系，表示现在有一个event发送出来了，哪些监听器应该要被触发
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
             waitingEvents.add(pair);
@@ -544,10 +551,12 @@ public class ClientCnxn {
             try {
                 isRunning = true;
                 while (true) {
+                    // 直接取出队列中的元素（会从队列中移除）
                     Object event = waitingEvents.take();
                     if (event == eventOfDeath) {
                         wasKilled = true;
                     } else {
+                        // 处理事件
                         processEvent(event);
                     }
                     if (wasKilled) {
@@ -568,6 +577,7 @@ public class ClientCnxn {
 
         private void processEvent(Object event) {
             try {
+                // 如果
                 if (event instanceof WatcherSetEventPair) {
                     // each watcher will process the event
                     WatcherSetEventPair pair = (WatcherSetEventPair) event;
@@ -600,6 +610,7 @@ public class ClientCnxn {
                         ((VoidCallback) lcb.cb).processResult(lcb.rc, lcb.path, lcb.ctx);
                     }
                 } else {
+                    // 如果是AsyncCallback
                     Packet p = (Packet) event;
                     int rc = 0;
                     String clientPath = p.clientPath;
@@ -611,8 +622,10 @@ public class ClientCnxn {
                     } else if (p.response instanceof ExistsResponse
                                || p.response instanceof SetDataResponse
                                || p.response instanceof SetACLResponse) {
+                        // 异步回调
                         StatCallback cb = (StatCallback) p.cb;
                         if (rc == 0) {
+                            // 如果响应结果正常，不是err
                             if (p.response instanceof ExistsResponse) {
                                 cb.processResult(rc, clientPath, p.ctx, ((ExistsResponse) p.response).getStat());
                             } else if (p.response instanceof SetDataResponse) {
@@ -621,6 +634,7 @@ public class ClientCnxn {
                                 cb.processResult(rc, clientPath, p.ctx, ((SetACLResponse) p.response).getStat());
                             }
                         } else {
+                            // 如果是err
                             cb.processResult(rc, clientPath, p.ctx, null);
                         }
                     } else if (p.response instanceof GetDataResponse) {
@@ -731,13 +745,18 @@ public class ClientCnxn {
 
     // @VisibleForTesting
     protected void finishPacket(Packet p) {
+        //
         int err = p.replyHeader.getErr();
+
+        // 在一个请求数据包处理完成后，如果需要注册Watcher就进行注册
         if (p.watchRegistration != null) {
+            // 这里会进行注册
             p.watchRegistration.register(err);
         }
         // Add all the removed watch events to the event queue, so that the
         // clients will be notified with 'Data/Child WatchRemoved' event type.
         if (p.watchDeregistration != null) {
+
             Map<EventType, Set<Watcher>> materializedWatchers = null;
             try {
                 materializedWatchers = p.watchDeregistration.unregister(err);
@@ -757,12 +776,17 @@ public class ClientCnxn {
             }
         }
 
+        // 重点在这里，一个数据包处理完了之后，如果没有异步回调，则notifyAll
         if (p.cb == null) {
             synchronized (p) {
                 p.finished = true;
                 p.notifyAll();
             }
         } else {
+            // 如果有异步回调，则把packet添加到eventThread线程管理的waitingEvents中
+            // 这个时候没有notify
+            // 相当于，客户端在请求服务端是，如果提供了AsyncCallback，就表示异步调用，如果没有就是同步调用
+            // p.finished直接设置为true
             p.finished = true;
             eventThread.queuePacket(p);
         }
@@ -998,6 +1022,8 @@ public class ClientCnxn {
                 clientCnxnSocket.getRemoteSocketAddress());
             isFirstConnect = false;
             long sessId = (seenRwServerBefore) ? sessionId : 0;
+
+            // socket连接建立好了之后，向服务端发送一个“连接请求”-ConnectRequest
             ConnectRequest conReq = new ConnectRequest(0, lastZxid, sessionTimeout, sessId, sessionPasswd);
             // We add backwards since we are pushing into the front
             // Only send if there's a pending watch
@@ -1009,6 +1035,7 @@ public class ClientCnxn {
                 List<String> childWatches = zooKeeper.getChildWatches();
                 List<String> persistentWatches = zooKeeper.getPersistentWatches();
                 List<String> persistentRecursiveWatches = zooKeeper.getPersistentRecursiveWatches();
+                // 遍历当前
                 if (!dataWatches.isEmpty() || !existWatches.isEmpty() || !childWatches.isEmpty()
                         || !persistentWatches.isEmpty() || !persistentRecursiveWatches.isEmpty()) {
                     Iterator<String> dataWatchesIter = prependChroot(dataWatches).iterator();
@@ -1054,6 +1081,7 @@ public class ClientCnxn {
 
                         Record record;
                         int opcode;
+
                         if (persistentWatchesBatch.isEmpty() && persistentRecursiveWatchesBatch.isEmpty()) {
                             // maintain compatibility with older servers - if no persistent/recursive watchers
                             // are used, use the old version of SetWatches
@@ -1072,6 +1100,7 @@ public class ClientCnxn {
             }
 
             for (AuthData id : authInfo) {
+                // 验证
                 outgoingQueue.addFirst(
                     new Packet(
                         new RequestHeader(ClientCnxn.AUTHPACKET_XID, OpCode.auth),
@@ -1080,7 +1109,11 @@ public class ClientCnxn {
                         null,
                         null));
             }
+
+            // 添加一个连接请求的数据包到outgoingQueue中，而且是第一个，一定是先处理连接请求，再处理其他数据
             outgoingQueue.addFirst(new Packet(null, null, conReq, null, null, readOnly));
+
+            // 注册读写事件
             clientCnxnSocket.connectionPrimed();
             LOG.debug("Session establishment request sent on {}", clientCnxnSocket.getRemoteSocketAddress());
         }
@@ -1154,6 +1187,7 @@ public class ClientCnxn {
                     saslLoginFailed = true;
                 }
             }
+
             logStartConnect(addr);
 
             clientCnxnSocket.connect(addr);
@@ -1169,14 +1203,19 @@ public class ClientCnxn {
         @Override
         public void run() {
             clientCnxnSocket.introduce(this, sessionId, outgoingQueue);
+            // 线程在一开始运行时，把now、lastSend、lastHeard都更新为当前时间
             clientCnxnSocket.updateNow();
             clientCnxnSocket.updateLastSendAndHeard();
             int to;
             long lastPingRwServer = Time.currentElapsedTime();
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             InetSocketAddress serverAddress = null;
+
+
+            // 只要不是被close了，或者向服务端验证失败了就是Alive，就算是还没有建立连接也是Alive
             while (state.isAlive()) {
                 try {
+                    // 判断的是sockKey != null则表示已经连接了
                     if (!clientCnxnSocket.isConnected()) {
                         // don't re-establish connection if we are closing
                         if (closing) {
@@ -1188,10 +1227,14 @@ public class ClientCnxn {
                         } else {
                             serverAddress = hostProvider.next(1000);
                         }
+                        // 简历连接，包括两步
+                        // 1. 简历socket连接
+                        // 2. 连接初始化，primeConnection()
                         startConnect(serverAddress);
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
 
+                    // 已经连接成功了
                     if (state.isConnected()) {
                         // determine whether we need to send an AuthFailed event.
                         // 不管sasl
@@ -1227,11 +1270,11 @@ public class ClientCnxn {
                             }
                         }
 
-                        // 已经连接成功
-                        //
+                        // 没看的很明白，大概知道意思
+                        // 连接成功后，是否超过readTimeout，比如客户端
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
-                        // 没有连接成功
+                        // 没有连接成功，是否超过connectTimeout
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
 
@@ -1243,6 +1286,8 @@ public class ClientCnxn {
                         LOG.warn(warnInfo);
                         throw new SessionTimeoutException(warnInfo);
                     }
+
+
                     if (state.isConnected()) {
                         //1000(1 second) is to prevent race condition missing to send the second ping
                         //also make sure not to send too many pings when readTimeout is small
@@ -1253,6 +1298,7 @@ public class ClientCnxn {
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
                             // 客户端向服务端发送心跳
                             sendPing();
+                            // 更新lastSend
                             clientCnxnSocket.updateLastSend();
                         } else {
                             if (timeToNextPing < to) {
@@ -1298,6 +1344,7 @@ public class ClientCnxn {
                 }
             }
 
+            // 如果
             synchronized (state) {
                 // When it comes to this point, it guarantees that later queued
                 // packet to outgoingQueue will be notified of death.
@@ -1407,7 +1454,9 @@ public class ClientCnxn {
             long _sessionId,
             byte[] _sessionPasswd,
             boolean isRO) throws IOException {
+            // 服务端返回的timeout
             negotiatedSessionTimeout = _negotiatedSessionTimeout;
+            // 如果小于0,则应该关闭连接
             if (negotiatedSessionTimeout <= 0) {
                 state = States.CLOSED;
 
@@ -1421,6 +1470,7 @@ public class ClientCnxn {
                 throw new SessionExpiredException(warnInfo);
             }
 
+            // 客户端不是readonly，但是服务端是readonly，那肯定不行
             if (!readOnly && isRO) {
                 LOG.error("Read/write client got connected to read-only server");
             }
@@ -1438,7 +1488,9 @@ public class ClientCnxn {
                 Long.toHexString(sessionId),
                 negotiatedSessionTimeout,
                 (isRO ? " (READ-ONLY mode)" : ""));
+
             KeeperState eventState = (isRO) ? KeeperState.ConnectedReadOnly : KeeperState.SyncConnected;
+            // 连接正式建立后，发出一个事件，类型为None,状态为eventState
             eventThread.queueEvent(new WatchedEvent(Watcher.Event.EventType.None, eventState, null));
         }
 
@@ -1682,7 +1734,7 @@ public class ClientCnxn {
                 outgoingQueue.add(packet);
             }
         }
-        // 数据包添加后，立即唤醒niosocket
+        // 数据包添加后，立即唤醒niosocket，这是nio的特性
         sendThread.getClientCnxnSocket().packetAdded();
         return packet;
     }

@@ -351,6 +351,7 @@ public final class StaticHostProvider implements HostProvider {
                 currentIndex = 0;
             }
             addr = serverAddresses.get(currentIndex);
+            // 当把hostprovider中的所有地址都尝试去连了一遍之后，仍然没有连接上，这时就需要睡眠
             needToSleep = needToSleep || (currentIndex == lastIndex && spinDelay > 0);
             if (lastIndex == -1) {
                 // We don't want to sleep on the first ever connect attempt.

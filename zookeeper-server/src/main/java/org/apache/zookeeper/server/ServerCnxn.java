@@ -243,17 +243,21 @@ public abstract class ServerCnxn implements Stats, Watcher {
             }
         }
         int dataLength = data == null ? 0 : data.length;
+        // 响应包的长度
         int packetLength = header.length + dataLength;
+
         ServerStats serverStats = serverStats();
         if (serverStats != null) {
             serverStats.updateClientResponseSize(packetLength);
         }
+        // 把packetLength写入buffer中
         ByteBuffer lengthBuffer = ByteBuffer.allocate(4).putInt(packetLength);
         lengthBuffer.rewind();
 
         int bufferLen = data != null ? 3 : 2;
         ByteBuffer[] buffers = new ByteBuffer[bufferLen];
 
+        // 把packet的长度放在最前面
         buffers[0] = lengthBuffer;
         buffers[1] = ByteBuffer.wrap(header);
         if (data != null) {

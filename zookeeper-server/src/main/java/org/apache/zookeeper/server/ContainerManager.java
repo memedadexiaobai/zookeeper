@@ -93,6 +93,7 @@ public class ContainerManager {
                 @Override
                 public void run() {
                     try {
+                        //
                         checkContainers();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -158,6 +159,7 @@ public class ContainerManager {
     // VisibleForTesting
     protected Collection<String> getCandidates() {
         Set<String> candidates = new HashSet<String>();
+        // 拿容器节点，判断该节点的子节点是否为空，如果为空则把该containerPath添加到待删除列表中
         for (String containerPath : zkDb.getDataTree().getContainers()) {
             DataNode node = zkDb.getDataTree().getNode(containerPath);
             if ((node != null) && node.getChildren().isEmpty()) {
@@ -184,6 +186,8 @@ public class ContainerManager {
                 candidates.add(containerPath);
             }
         }
+
+        // 拿Ttl节点，判断该节点的子节点是否为空，如果为空则把该containerPath添加到待删除列表中
         for (String ttlPath : zkDb.getDataTree().getTtls()) {
             DataNode node = zkDb.getDataTree().getNode(ttlPath);
             if (node != null) {
@@ -191,6 +195,7 @@ public class ContainerManager {
                 if (children.isEmpty()) {
                     if (EphemeralType.get(node.stat.getEphemeralOwner()) == EphemeralType.TTL) {
                         long ttl = EphemeralType.TTL.getValue(node.stat.getEphemeralOwner());
+                        // 节点距离上一次修改之间的时间 超过ttl则加入待删除列表
                         if ((ttl != 0) && (getElapsed(node) > ttl)) {
                             candidates.add(ttlPath);
                         }
@@ -202,7 +207,9 @@ public class ContainerManager {
     }
 
     // VisibleForTesting
+    // 表示现在距离上一次修改之间的时间
     protected long getElapsed(DataNode node) {
+        // mtime，表示节点最近一次修改时间
         return Time.currentWallTime() - node.stat.getMtime();
     }
 

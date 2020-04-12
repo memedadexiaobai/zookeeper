@@ -71,19 +71,29 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         // 当有数据可读时
         if (sockKey.isReadable()) {
             // 把socket中的数据读入到incomingBuffer中
+            // 一开始只读了前4个字节的数据（lenBuffer）
             int rc = sock.read(incomingBuffer);
+
             if (rc < 0) {
+                // 有读就绪事件，但是没有读到数据了
                 throw new EndOfStreamException("Unable to read additional data from server sessionid 0x"
                                                + Long.toHexString(sessionId)
                                                + ", likely server has closed socket");
             }
-            // 如果incomingBuffer没有剩余数据了
+
+            // socket中的数据会读取到incomingBuffer中
+            // 如果incomingBuffer没有剩余可以读取的数据了，表示incomingBuffer中的数据都已经被处理完了，则需要从socket中读取
             if (!incomingBuffer.hasRemaining()) {
                 incomingBuffer.flip();
+
+                // 拿前4个字节的数据（Packet的长度）再生成一个incomingBuffer
+                // 做的太精致了
                 if (incomingBuffer == lenBuffer) {
                     recvCount.getAndIncrement();
                     readLength();
                 } else if (!initialized) {
+                    // socket连接已经建立好了，还没有初始化
+                    // 读取连接请求的结果
                     readConnectResult();
                     enableRead();
                     if (findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress()) != null) {
@@ -94,6 +104,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
                     updateLastHeard();
+                    // 连接已经初始化好了
                     initialized = true;
                 } else {
                     // 从incomingBuffer中读取响应
@@ -363,8 +374,12 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
                 if (sc.finishConnect()) {
                     // socket连接成功后，进行一些连接初始化
+
+                    // 连接成功后更新lastSend和lastHeard
                     updateLastSendAndHeard();
+
                     updateSocketAddresses();
+
                     sendThread.primeConnection();
                 }
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
