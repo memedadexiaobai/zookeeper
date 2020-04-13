@@ -102,6 +102,7 @@ public class ZooKeeperServerMain {
             LOG.warn("Unable to register log4j JMX control", e);
         }
 
+        // 从配置文件中解析出ServerConfig
         ServerConfig config = new ServerConfig();
         if (args.length == 1) {
             config.parse(args[0]);
@@ -109,6 +110,7 @@ public class ZooKeeperServerMain {
             config.parse(args);
         }
 
+        // 运行
         runFromConfig(config);
     }
 
@@ -122,6 +124,7 @@ public class ZooKeeperServerMain {
         LOG.info("Starting server");
         FileTxnSnapLog txnLog = null;
         try {
+            // 暂时还没有研究
             try {
                 metricsProvider = MetricsProviderBootstrap.startMetricsProvider(
                     config.getMetricsProviderClassName(),
@@ -133,12 +136,19 @@ public class ZooKeeperServerMain {
             // Note that this thread isn't going to be doing anything else,
             // so rather than spawning another thread, we will just call
             // run() in this thread.
+
+
             // create a file logger url from the command line args
+            // 日志目录、数据目录
             txnLog = new FileTxnSnapLog(config.dataLogDir, config.dataDir);
+
+            // 暂时没有研究
             JvmPauseMonitor jvmPauseMonitor = null;
             if (config.jvmPauseMonitorToRun) {
                 jvmPauseMonitor = new JvmPauseMonitor(config);
             }
+
+            //
             final ZooKeeperServer zkServer = new ZooKeeperServer(jvmPauseMonitor, txnLog, config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, config.listenBacklog, null, config.initialConfig);
             txnLog.setServerStats(zkServer.serverStats());
 
@@ -154,8 +164,11 @@ public class ZooKeeperServerMain {
 
             boolean needStartZKServer = true;
             if (config.getClientPortAddress() != null) {
+                // 默认拿到NIOServerCnxnFactory
                 cnxnFactory = ServerCnxnFactory.createFactory();
+                // ServerSocketChannel bind地址和端口 ,设置最大客户端连接限制数
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
+                // 启动
                 cnxnFactory.startup(zkServer);
                 // zkServer has been started. So we don't need to start it again in secureCnxnFactory.
                 needStartZKServer = false;
@@ -166,6 +179,7 @@ public class ZooKeeperServerMain {
                 secureCnxnFactory.startup(zkServer, needStartZKServer);
             }
 
+            // 启动容器节点定时器
             containerManager = new ContainerManager(
                 zkServer.getZKDatabase(),
                 zkServer.firstProcessor,
@@ -174,12 +188,15 @@ public class ZooKeeperServerMain {
                 Long.getLong("znode.container.maxNeverUsedIntervalMs", 0)
             );
             containerManager.start();
+
             ZKAuditProvider.addZKStartStopAuditLog();
 
             // Watch status of ZooKeeper server. It will do a graceful shutdown
             // if the server is not running or hits an internal error.
+            // zkServer被shutdown时，这里就会解阻塞
             shutdownLatch.await();
 
+            // zkServer关闭了，其他东西也得关闭
             shutdown();
 
             if (cnxnFactory != null) {

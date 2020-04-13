@@ -266,11 +266,14 @@ public class FileTxnLog implements TxnLog, Closeable {
               return append(hdr, txn, null);
     }
 
+    // hdr-日志头
+    // txn-日志体
     @Override
     public synchronized boolean append(TxnHeader hdr, Record txn, TxnDigest digest) throws IOException {
         if (hdr == null) {
             return false;
         }
+        // 当前日志id 小于 上一次的日志id
         if (hdr.getZxid() <= lastZxidSeen) {
             LOG.warn(
                 "Current zxid {} is <= {} for {}",
@@ -283,25 +286,34 @@ public class FileTxnLog implements TxnLog, Closeable {
         if (logStream == null) {
             LOG.info("Creating new log file: {}", Util.makeLogName(hdr.getZxid()));
 
+            // 日志写入的文件
             logFileWrite = new File(logDir, Util.makeLogName(hdr.getZxid()));
             fos = new FileOutputStream(logFileWrite);
             logStream = new BufferedOutputStream(fos);
             oa = BinaryOutputArchive.getArchive(logStream);
+
+
             FileHeader fhdr = new FileHeader(TXNLOG_MAGIC, VERSION, dbId);
             fhdr.serialize(oa, "fileheader");
+            // 这里是先向文件中写入一下magic数
             // Make sure that the magic number is written before padding.
             logStream.flush();
             filePadding.setCurrentSize(fos.getChannel().position());
             streamsToFlush.add(fos);
         }
         filePadding.padFile(fos.getChannel());
+
+        // 日志头和日志体做出buf
         byte[] buf = Util.marshallTxnEntry(hdr, txn, digest);
+
         if (buf == null || buf.length == 0) {
             throw new IOException("Faulty serialization for header " + "and txn");
         }
         Checksum crc = makeChecksumAlgorithm();
         crc.update(buf, 0, buf.length);
         oa.writeLong(crc.getValue(), "txnEntryCRC");
+
+        // 将buf写入oa，对应的就是File中，但是还没有提交，在commit方法中才会提交
         Util.writeTxnBytes(oa, buf);
 
         return true;
@@ -388,9 +400,12 @@ public class FileTxnLog implements TxnLog, Closeable {
      * disk
      */
     public synchronized void commit() throws IOException {
+        // 这里才会写入文件
         if (logStream != null) {
             logStream.flush();
         }
+
+
         for (FileOutputStream log : streamsToFlush) {
             log.flush();
             if (forceSync) {

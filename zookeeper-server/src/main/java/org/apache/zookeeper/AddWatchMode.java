@@ -31,6 +31,7 @@ public enum AddWatchMode {
      * a getData() watch on the ZNode at the given path.
      * </p>
      */
+    // 之前的版本，一个watch被触发一次之后，就会被取消掉，而PERSISTENT类型的Watch就不会被取消掉了
     PERSISTENT(ZooDefs.AddWatchModes.persistent),
 
     /**
@@ -52,6 +53,7 @@ public enum AddWatchMode {
      * of ZNode paths must be checked for watch triggering.
      * </p>
      */
+    // 递归，子节点的数据变化也会触发Watcher，而且子节点的子节点数据发生变化也会触发监听器
     PERSISTENT_RECURSIVE(ZooDefs.AddWatchModes.persistentRecursive)
     ;
 

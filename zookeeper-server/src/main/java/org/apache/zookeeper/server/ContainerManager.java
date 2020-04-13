@@ -93,7 +93,7 @@ public class ContainerManager {
                 @Override
                 public void run() {
                     try {
-                        //
+                        // 不仅仅只是检查，会进行删除
                         checkContainers();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -126,13 +126,16 @@ public class ContainerManager {
      */
     public void checkContainers() throws InterruptedException {
         long minIntervalMs = getMinIntervalMs();
+        // 拿到待删除的节点路径
         for (String containerPath : getCandidates()) {
             long startMs = Time.currentElapsedTime();
 
             ByteBuffer path = ByteBuffer.wrap(containerPath.getBytes());
+            // 构造一个请求
             Request request = new Request(null, 0, 0, ZooDefs.OpCode.deleteContainer, path, null);
             try {
                 LOG.info("Attempting to delete candidate container: {}", containerPath);
+                // 使用requestProcessor处理请求，requestProcessor是firstProcessor
                 postDeleteRequest(request);
             } catch (Exception e) {
                 LOG.error("Could not delete container: {}", containerPath, e);
@@ -140,6 +143,7 @@ public class ContainerManager {
 
             long elapsedMs = Time.currentElapsedTime() - startMs;
             long waitMs = minIntervalMs - elapsedMs;
+
             if (waitMs > 0) {
                 Thread.sleep(waitMs);
             }
@@ -160,6 +164,7 @@ public class ContainerManager {
     protected Collection<String> getCandidates() {
         Set<String> candidates = new HashSet<String>();
         // 拿容器节点，判断该节点的子节点是否为空，如果为空则把该containerPath添加到待删除列表中
+        // 包括容器节点和TTL节点
         for (String containerPath : zkDb.getDataTree().getContainers()) {
             DataNode node = zkDb.getDataTree().getNode(containerPath);
             if ((node != null) && node.getChildren().isEmpty()) {

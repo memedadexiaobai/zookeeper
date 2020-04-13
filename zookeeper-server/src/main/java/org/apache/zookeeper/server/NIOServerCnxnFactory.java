@@ -226,7 +226,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     if (!key.isValid()) {
                         continue;
                     }
+                    // 连接事件
                     if (key.isAcceptable()) {
+                        // 接收一个socket连接
                         if (!doAccept()) {
                             // If unable to pull a new connection off the accept
                             // queue, pause accepting to give us time to free
@@ -288,10 +290,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 sc.configureBlocking(false);
 
                 // Round-robin assign this connection to a selector thread
+                // 每接收到一个socket连接，就以轮询的方式把当前socket连接交给一个selectorThread去处理该socket
                 if (!selectorIterator.hasNext()) {
                     selectorIterator = selectorThreads.iterator();
                 }
                 SelectorThread selectorThread = selectorIterator.next();
+
+                // 把当前sc添加到selectorThread的队列中，selectorThread会处理它自己的队列中的sc
                 if (!selectorThread.addAcceptedConnection(sc)) {
                     throw new IOException("Unable to add connection to selector queue"
                                           + (stopped ? " (shutdown in progress)" : ""));
@@ -733,18 +738,26 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     @Override
     public void start() {
         stopped = false;
+
+        // 工作线程池
         if (workerPool == null) {
             workerPool = new WorkerService("NIOWorker", numWorkerThreads, false);
         }
+
+        // 启动selector线程
         for (SelectorThread thread : selectorThreads) {
             if (thread.getState() == Thread.State.NEW) {
                 thread.start();
             }
         }
+
         // ensure thread is started once and only once
+        // 启动接收连接线程
         if (acceptThread.getState() == Thread.State.NEW) {
             acceptThread.start();
         }
+
+        // 暂时没有研究
         if (expirerThread.getState() == Thread.State.NEW) {
             expirerThread.start();
         }

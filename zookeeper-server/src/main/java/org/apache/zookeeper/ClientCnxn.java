@@ -498,6 +498,7 @@ public class ClientCnxn {
             queueEvent(event, null);
         }
 
+        // event表示服务端发送过来的事件
         private void queueEvent(WatchedEvent event, Set<Watcher> materializedWatchers) {
             // 修改sessionState
             if (event.getType() == EventType.None && sessionState == event.getState()) {
@@ -509,6 +510,9 @@ public class ClientCnxn {
             final Set<Watcher> watchers;
             if (materializedWatchers == null) {
                 // materialize the watchers based on the event
+                // watcher是ZKWatchManager， 客户端Watch管理器
+                // 传入事件的状态、事件的类型、事件所对应的path
+                // 得到的watchers表示当前触发的event应该要触发watcher执行
                 watchers = watcher.materialize(event.getState(), event.getType(), event.getPath());
             } else {
                 watchers = new HashSet<Watcher>();
@@ -516,7 +520,7 @@ public class ClientCnxn {
             }
             // WatcherSet表示监听器集合
             // Event表示事件
-            // WatcherSetEventPair表示 监听器集合：Event的一个对应关系，表示现在有一个event发送出来了，哪些监听器应该要被触发
+            // WatcherSetEventPair表示 {监听器集合：Event}的一个对应关系，表示现在有一个event发送出来了，哪些监听器应该要被触发
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
             waitingEvents.add(pair);

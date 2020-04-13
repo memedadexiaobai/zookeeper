@@ -530,16 +530,20 @@ public class ZooKeeper implements AutoCloseable {
 
             // 把WatcherEvent按type分组
 
+            // 事件的类型
             switch (type) {
             case None:
+                // 如果事件类型是None，那么需要触发
+                // defaultWatcher、dataWatches、existWatches、childWatches、persistentWatches、persistentRecursiveWatches
+
                 result.add(defaultWatcher);
                 boolean clear = disableAutoWatchReset && state != Watcher.Event.KeeperState.SyncConnected;
 
-                // 把所有dataWatches添加到
                 synchronized (dataWatches) {
                     for (Set<Watcher> ws : dataWatches.values()) {
                         result.addAll(ws);
                     }
+                    // 触发完则清空
                     if (clear) {
                         dataWatches.clear();
                     }
@@ -549,6 +553,7 @@ public class ZooKeeper implements AutoCloseable {
                     for (Set<Watcher> ws : existWatches.values()) {
                         result.addAll(ws);
                     }
+                    // 触发完则清空
                     if (clear) {
                         existWatches.clear();
                     }
@@ -558,12 +563,15 @@ public class ZooKeeper implements AutoCloseable {
                     for (Set<Watcher> ws : childWatches.values()) {
                         result.addAll(ws);
                     }
+
+                    // 触发完则清空
                     if (clear) {
                         childWatches.clear();
                     }
                 }
 
                 synchronized (persistentWatches) {
+
                     for (Set<Watcher> ws: persistentWatches.values()) {
                         result.addAll(ws);
                     }
@@ -580,6 +588,7 @@ public class ZooKeeper implements AutoCloseable {
             case NodeCreated:
                 synchronized (dataWatches) {
                     // 把从dataWatches移除出来的watcher添加到result中
+                    // 这里就是原生的客户端的watche会在事件触发完了之后消失，因为是remove
                     addTo(dataWatches.remove(clientPath), result);
                 }
                 synchronized (existWatches) {
