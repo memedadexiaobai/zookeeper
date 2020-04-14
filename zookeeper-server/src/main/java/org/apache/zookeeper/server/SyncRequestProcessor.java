@@ -125,9 +125,13 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     private boolean shouldFlush() {
         long flushDelay = zks.getFlushDelay();
         long maxBatchSize = zks.getMaxBatchSize();
+
+        // 定时flush
         if ((flushDelay > 0) && (getRemainingDelay() == 0)) {
             return true;
         }
+
+        // 积累maxBatchSize个请求就flush
         return (maxBatchSize > 0) && (toFlush.size() >= maxBatchSize);
     }
 
@@ -141,6 +145,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private boolean shouldSnapshot() {
+        // 当前的
         int logCount = zks.getZKDatabase().getTxnCount();
         long logSize = zks.getZKDatabase().getTxnSize();
         return (logCount > (snapCount / 2 + randRoll))
@@ -159,10 +164,16 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             // in the ensemble take a snapshot at the same time
             resetSnapshotStats();
             lastFlushTime = Time.currentElapsedTime();
+
+            // 不断的从queuedRequests获取Request进行持久化
+            // 先尝试把Request对象添加到
+
             while (true) {
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_SIZE.add(queuedRequests.size());
 
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
+
+                // poll会阻塞，直到有数据返回
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
                 if (si == null) {
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
@@ -178,7 +189,11 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
+                // si表示Request，此时的Request中已经有日志头和日志体中了，可以持久化了
+                // append只是把request添加到stream中
+                // 只有当Request中的hdr为null时才返回false
                 if (zks.getZKDatabase().append(si)) {
+                    // 是否应该打快照了
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
                         // roll the log
@@ -201,6 +216,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                         }
                     }
                 } else if (toFlush.isEmpty()) {
+                    // toFlush是一个队列，表示需要进行持久化的Request，当Request被持久化了之后，就会把Request从toFlush中移除，直接调用nextProcessor
+                    // 所以如果一个Request的hdr为null，表示不用进行持久化，
+                    // 并且当toFlush队列中有值时不能先执行这个Request请求，得等toFlush中请求都执行完了之后才能执行
+
                     // optimization for read heavy workloads
                     // iff this is a read, and there are no pending
                     // flushes (writes), then just pass this to the next
@@ -213,10 +232,16 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     }
                     continue;
                 }
+
+                // 把当前请求添加到待flush队列中
                 toFlush.add(si);
+
+                // 判断是否可以Flush了
+                // 当累积了maxBatchSize个请求，或者达到某个定时点了就进行持久化
                 if (shouldFlush()) {
                     flush();
                 }
+
                 ServerMetrics.getMetrics().SYNC_PROCESS_TIME.add(Time.currentElapsedTime() - startProcessTime);
             }
         } catch (Throwable t) {
@@ -233,6 +258,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         ServerMetrics.getMetrics().BATCH_SIZE.add(toFlush.size());
 
         long flushStartTime = Time.currentElapsedTime();
+        // flush logStream，真正进行持久化
         zks.getZKDatabase().commit();
         ServerMetrics.getMetrics().SYNC_PROCESSOR_FLUSH_TIME.add(Time.currentElapsedTime() - flushStartTime);
 
@@ -240,6 +266,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             this.toFlush.clear();
         } else {
             while (!this.toFlush.isEmpty()) {
+                // 把toFlush中的请求交给nextProcessor
                 final Request i = this.toFlush.remove();
                 long latency = Time.currentElapsedTime() - i.syncQueueStartTime;
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_AND_FLUSH_TIME.add(latency);

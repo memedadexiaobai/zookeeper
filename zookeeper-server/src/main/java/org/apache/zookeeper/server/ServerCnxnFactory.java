@@ -77,6 +77,7 @@ public abstract class ServerCnxnFactory {
      *         and it's closed. Otherwise false.
      */
     public boolean closeSession(long sessionId, ServerCnxn.DisconnectReason reason) {
+        // 先把ServerCnxn从map中移除
         ServerCnxn cnxn = sessionMap.remove(sessionId);
         if (cnxn != null) {
             try {

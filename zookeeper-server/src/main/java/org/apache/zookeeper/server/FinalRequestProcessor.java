@@ -118,6 +118,9 @@ public class FinalRequestProcessor implements RequestProcessor {
             ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
         }
 
+        // 1. 会更新ZKDatabase
+        // 2. 触发watch
+        // 3. 如果是集群模式就是发起提议
         ProcessTxnResult rc = zks.processTxn(request);
 
         // ZOOKEEPER-558:
@@ -155,6 +158,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         }
         ServerCnxn cnxn = request.cnxn;
 
+        // zkDataBase中最近的一个zxid
         long lastZxid = zks.getZKDatabase().getDataTreeLastProcessedZxid();
 
         String lastOp = "NA";
@@ -196,6 +200,8 @@ public class FinalRequestProcessor implements RequestProcessor {
                 ServerMetrics.getMetrics().STALE_REPLIES.add(1);
             }
             AuditHelper.addAuditLog(request, rc);
+
+            // 发送response
             switch (request.type) {
             case OpCode.ping: {
                 lastOp = "PING";
@@ -365,6 +371,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 GetDataRequest getDataRequest = new GetDataRequest();
                 ByteBufferInputStream.byteBuffer2Record(request.request, getDataRequest);
                 path = getDataRequest.getPath();
+
                 rsp = handleGetDataRequest(getDataRequest, cnxn, request.authInfo);
                 requestPathMetricsCollector.registerRequest(request.type, path);
                 break;
@@ -642,6 +649,8 @@ public class FinalRequestProcessor implements RequestProcessor {
         }
         zks.checkACL(cnxn, zks.getZKDatabase().aclForNode(n), ZooDefs.Perms.READ, authInfo, path, null);
         Stat stat = new Stat();
+
+        // 这里会生成一个watch, cnxn也是一个cnxn，一个客户端对应一个
         byte[] b = zks.getZKDatabase().getData(path, stat, getDataRequest.getWatch() ? cnxn : null);
         return new GetDataResponse(b, stat);
     }

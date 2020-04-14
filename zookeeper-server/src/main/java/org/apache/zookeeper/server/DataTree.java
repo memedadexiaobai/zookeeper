@@ -466,10 +466,15 @@ public class DataTree {
      */
     public void createNode(final String path, byte[] data, List<ACL> acl, long ephemeralOwner, int parentCVersion, long zxid, long time, Stat outputStat) throws KeeperException.NoNodeException, KeeperException.NodeExistsException {
         int lastSlash = path.lastIndexOf('/');
-        String parentName = path.substring(0, lastSlash);
-        String childName = path.substring(lastSlash + 1);
+        String parentName = path.substring(0, lastSlash); // 父节点
+        String childName = path.substring(lastSlash + 1); // 本节点
+
+        //
         StatPersisted stat = createStat(zxid, time, ephemeralOwner);
+
+        // 拿到父节点
         DataNode parent = nodes.get(parentName);
+
         if (parent == null) {
             throw new KeeperException.NoNodeException();
         }
@@ -487,36 +492,46 @@ public class DataTree {
             // we did for the global sessions.
             Long longval = aclCache.convertAcls(acl);
 
+            // 是否重复
             Set<String> children = parent.getChildren();
             if (children.contains(childName)) {
                 throw new KeeperException.NodeExistsException();
             }
 
             nodes.preChange(parentName, parent);
+
+            //
             if (parentCVersion == -1) {
                 parentCVersion = parent.stat.getCversion();
                 parentCVersion++;
             }
+
+
             // There is possibility that we'll replay txns for a node which
             // was created and then deleted in the fuzzy range, and it's not
             // exist in the snapshot, so replay the creation might revert the
             // cversion and pzxid, need to check and only update when it's
             // larger.
+            // 修改父节点的信息（日志信息已经在SyncRequestProcessor中持久化了，这里只是更新内存中的对象）
             if (parentCVersion > parent.stat.getCversion()) {
                 parent.stat.setCversion(parentCVersion);
                 parent.stat.setPzxid(zxid);
             }
+
             DataNode child = new DataNode(data, longval, stat);
             parent.addChild(childName);
             nodes.postChange(parentName, parent);
             nodeDataSize.addAndGet(getNodeSize(path, child.data));
             nodes.put(path, child);
+
+            //
             EphemeralType ephemeralType = EphemeralType.get(ephemeralOwner);
             if (ephemeralType == EphemeralType.CONTAINER) {
                 containers.add(path);
             } else if (ephemeralType == EphemeralType.TTL) {
                 ttls.add(path);
             } else if (ephemeralOwner != 0) {
+                // 普通临时节点
                 HashSet<String> list = ephemerals.get(ephemeralOwner);
                 if (list == null) {
                     list = new HashSet<String>();
@@ -542,6 +557,7 @@ public class DataTree {
                 updateQuotaForPath(parentName.substring(quotaZookeeper.length()));
             }
         }
+
         // also check to update the quotas for this node
         String lastPrefix = getMaxPrefixWithQuota(path);
         long bytes = data == null ? 0 : data.length;
@@ -550,6 +566,8 @@ public class DataTree {
             updateCountBytes(lastPrefix, bytes, 1);
         }
         updateWriteStat(path, bytes);
+
+        // 触发watch,
         dataWatches.triggerWatch(path, Event.EventType.NodeCreated);
         childWatches.triggerWatch(parentName.equals("") ? "/" : parentName, Event.EventType.NodeChildrenChanged);
     }
@@ -713,6 +731,7 @@ public class DataTree {
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
+
         synchronized (n) {
             n.copyStat(stat);
             if (watcher != null) {
@@ -887,6 +906,8 @@ public class DataTree {
             case OpCode.create:
                 CreateTxn createTxn = (CreateTxn) txn;
                 rc.path = createTxn.getPath();
+
+                // 创建node
                 createNode(
                     createTxn.getPath(),
                     createTxn.getData(),

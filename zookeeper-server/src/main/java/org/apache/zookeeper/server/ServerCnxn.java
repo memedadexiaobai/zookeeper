@@ -358,6 +358,7 @@ public abstract class ServerCnxn implements Stats, Watcher {
     }
 
     protected void packetReceived(long bytes) {
+        // 接收到一个包，就加1
         incrPacketsReceived();
         ServerStats serverStats = serverStats();
         if (serverStats != null) {

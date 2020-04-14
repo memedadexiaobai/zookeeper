@@ -74,7 +74,9 @@ public class WatchManager implements IWatchManager {
             return false;
         }
 
+        // 这里是个Set, 一个节点会对应一个Set<Watcher>，每个客户端一个Watcher
         Set<Watcher> list = watchTable.get(path);
+
         if (list == null) {
             // don't waste memory if there are few watches on a node
             // rehash when the 4th entry is added, doubling size thereafter
@@ -121,12 +123,17 @@ public class WatchManager implements IWatchManager {
 
     @Override
     public WatcherOrBitSet triggerWatch(String path, EventType type, WatcherOrBitSet supress) {
+        //
         WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
+
         Set<Watcher> watchers = new HashSet<>();
+
         PathParentIterator pathParentIterator = getPathParentIterator(path);
         synchronized (this) {
             for (String localPath : pathParentIterator.asIterable()) {
+                // 当前path对应的节点上有几个watcher(可能存在多个客户端，而且每个客户端对同一节点)
                 Set<Watcher> thisWatchers = watchTable.get(localPath);
+
                 if (thisWatchers == null || thisWatchers.isEmpty()) {
                     continue;
                 }
@@ -154,12 +161,14 @@ public class WatchManager implements IWatchManager {
                 }
             }
         }
+
         if (watchers.isEmpty()) {
             if (LOG.isTraceEnabled()) {
                 ZooTrace.logTraceMessage(LOG, ZooTrace.EVENT_DELIVERY_TRACE_MASK, "No watchers for " + path);
             }
             return null;
         }
+
 
         for (Watcher w : watchers) {
             if (supress != null && supress.contains(w)) {

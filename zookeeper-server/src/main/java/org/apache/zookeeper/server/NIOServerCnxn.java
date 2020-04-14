@@ -166,6 +166,9 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /** Read the request payload (everything following the length prefix) */
     private void readPayload() throws IOException, InterruptedException, ClientCnxnLimitException {
+
+        // incomingBuffer的大小就是packet的大小，所以先看一下是不是packet的数据都读到incomingBuffer中了
+        // incomingBuffer还有空闲则继续读
         if (incomingBuffer.remaining() != 0) { // have we read length bytes?
             int rc = sock.read(incomingBuffer); // sock is non-blocking, so ok
             if (rc < 0) {
@@ -173,12 +176,17 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         }
 
+        // 如果incomingBuffer已经满了，则表示packet的数据都已经读到incomingBuffer中了，则进行处理
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
             incomingBuffer.flip();
             packetReceived(4 + incomingBuffer.remaining());
+
+            //
             if (!initialized) {
+                // socket连接建立好了，还没有初始化，处理ConnectRequest
                 readConnectRequest();
             } else {
+                // 处理其他命令请求
                 readRequest();
             }
             lenBuffer.clear();
@@ -321,21 +329,30 @@ public class NIOServerCnxn extends ServerCnxn {
                 return;
             }
             if (k.isReadable()) {
-                int rc = sock.read(incomingBuffer);
+                // 读就绪，把数据读到incomingBuffer中，
+                int rc = sock.read(incomingBuffer); // 一开始读4个字节数据，也就是读数据包的长度
                 if (rc < 0) {
+                    // 没有读到数据则报错
                     handleFailedRead();
                 }
+
+                // 表示还有没有剩余空间可以读数据
                 if (incomingBuffer.remaining() == 0) {
                     boolean isPayload;
+
+                    // 读到的是长度
                     if (incomingBuffer == lenBuffer) { // start of next request
                         incomingBuffer.flip();
                         isPayload = readLength(k);
                         incomingBuffer.clear();
                     } else {
+                        // 读到的是真正的packet数据（也就是命令）
                         // continuation
                         isPayload = true;
                     }
+
                     if (isPayload) { // not the case for 4letterword
+                        // 处理命令
                         readPayload();
                     } else {
                         // four letter words take care
@@ -345,6 +362,7 @@ public class NIOServerCnxn extends ServerCnxn {
                 }
             }
             if (k.isWritable()) {
+                // 从outgoingBuffers中获取数据进行写入（返回给客户端）
                 handleWrite(k);
 
                 if (!initialized && !getReadInterest() && !getWriteInterest()) {
@@ -416,6 +434,7 @@ public class NIOServerCnxn extends ServerCnxn {
         if (!isZKServerRunning()) {
             throw new IOException("ZooKeeperServer not running");
         }
+        // 这里也会处理重连
         zkServer.processConnectRequest(this, incomingBuffer);
         initialized = true;
     }
@@ -533,7 +552,7 @@ public class NIOServerCnxn extends ServerCnxn {
      */
     private boolean readLength(SelectionKey k) throws IOException {
         // Read the length, now get the buffer
-        int len = lenBuffer.getInt();
+        int len = lenBuffer.getInt();   // 前四个字节表示packet的大小
         if (!initialized && checkFourLetterWord(sk, len)) {
             return false;
         }
@@ -545,6 +564,7 @@ public class NIOServerCnxn extends ServerCnxn {
         }
         // checkRequestSize will throw IOException if request is rejected
         zkServer.checkRequestSizeWhenReceivingMessage(len);
+        // 重新分配一个incomingBuffer
         incomingBuffer = ByteBuffer.allocate(len);
         return true;
     }
@@ -585,10 +605,12 @@ public class NIOServerCnxn extends ServerCnxn {
 
     private void close() {
         setStale();
+        // 全是移除
         if (!factory.removeCnxn(this)) {
             return;
         }
 
+        // 这里会去移除服务端上的Watcher
         if (zkServer != null) {
             zkServer.removeCnxn(this);
         }
@@ -602,6 +624,7 @@ public class NIOServerCnxn extends ServerCnxn {
             }
         }
 
+        // 关闭socket
         closeSock();
     }
 

@@ -83,6 +83,7 @@ public enum EphemeralType {
             return EXTENDED_FEATURE_VALUE_MASK;  // 12725 days, about 34 years
         }
 
+        // 根据ttl时间计算出来一个TTL节点拥有者
         @Override
         public long toEphemeralOwner(long ttl) {
             // 过期时间太大

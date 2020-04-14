@@ -131,6 +131,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     public static void setFailCreate(boolean b) {
         failCreate = b;
     }
+
     @Override
     public void run() {
         try {
@@ -139,6 +140,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 Request request = submittedRequests.take();
                 ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUE_TIME
                     .add(Time.currentElapsedTime() - request.prepQueueStartTime);
+
                 long traceMask = ZooTrace.CLIENT_REQUEST_TRACE_MASK;
                 if (request.type == OpCode.ping) {
                     traceMask = ZooTrace.CLIENT_PING_TRACE_MASK;
@@ -151,6 +153,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 }
 
                 request.prepStartTime = Time.currentElapsedTime();
+
                 pRequest(request);
             }
         } catch (Exception e) {
@@ -164,12 +167,17 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         synchronized (zks.outstandingChanges) {
             lastChange = zks.outstandingChangesForPath.get(path);
             if (lastChange == null) {
+                // 根据path拿到节点
                 DataNode n = zks.getZKDatabase().getNode(path);
+
                 if (n != null) {
                     Set<String> children;
                     synchronized (n) {
+                        // 孩子节点
                         children = n.getChildren();
                     }
+
+                    // 修改记录
                     lastChange = new ChangeRecord(-1, path, n.stat, children.size(), zks.getZKDatabase().aclForNode(n));
 
                     if (digestEnabled) {
@@ -297,11 +305,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      * @throws BadArgumentsException
      */
     private String validatePathForCreate(String path, long sessionId) throws BadArgumentsException {
+        // 路径中的最后一个"/"符号的位置
         int lastSlash = path.lastIndexOf('/');
+
         if (lastSlash == -1 || path.indexOf('\0') != -1 || failCreate) {
             LOG.info("Invalid path {} with session 0x{}", path, Long.toHexString(sessionId));
             throw new KeeperException.BadArgumentsException(path);
         }
+
+        // 拿到当前创建节点的父节点
         return path.substring(0, lastSlash);
     }
 
@@ -315,7 +327,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      * @param record
      */
     protected void pRequest2Txn(int type, long zxid, Request request, Record record, boolean deserialize) throws KeeperException, IOException, RequestProcessorException {
+        // 这是日志头
         if (request.getHdr() == null) {
+            // sessionID、cxid、zxid、当前时间、请求类型
             request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
                     Time.currentWallTime(), type));
         }
@@ -646,6 +660,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private void pRequest2TxnCreate(int type, Request request, Record record, boolean deserialize) throws IOException, KeeperException {
+        // 把请求中的请求体，复制到record中，等待持久化
         if (deserialize) {
             ByteBufferInputStream.byteBuffer2Record(request.request, record);
         }
@@ -656,6 +671,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         byte[] data;
         long ttl;
         if (type == OpCode.createTTL) {
+            // TTL节点
             CreateTTLRequest createTtlRequest = (CreateTTLRequest) record;
             flags = createTtlRequest.getFlags();
             path = createTtlRequest.getPath();
@@ -670,18 +686,30 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             data = createRequest.getData();
             ttl = -1;
         }
+        // 节点类型（临时节点、顺序节点...）
         CreateMode createMode = CreateMode.fromFlag(flags);
+
         validateCreateRequest(path, createMode, request, ttl);
+
+        // 当前节点的父节点
         String parentPath = validatePathForCreate(path, request.sessionId);
 
         List<ACL> listACL = fixupACL(path, request.authInfo, acl);
+
+        // 拿到父节点的ChangeRecord，现在是创建一个节点，所以父节点上的属性也是需要改变的
         ChangeRecord parentRecord = getRecordForPath(parentPath);
 
         zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.CREATE, request.authInfo, path, listACL);
+
+        // 创建
         int parentCVersion = parentRecord.stat.getCversion();
+
         if (createMode.isSequential()) {
+            //
             path = path + String.format(Locale.ENGLISH, "%010d", parentCVersion);
         }
+
+
         validatePath(path, request.sessionId);
         try {
             if (getRecordForPath(path) != null) {
@@ -690,11 +718,17 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } catch (KeeperException.NoNodeException e) {
             // ignore this one
         }
+
+        // 父节点是不是一个临时节点
         boolean ephemeralParent = EphemeralType.get(parentRecord.stat.getEphemeralOwner()) == EphemeralType.NORMAL;
         if (ephemeralParent) {
             throw new KeeperException.NoChildrenForEphemeralsException(path);
         }
+
+        // Cversion+1
         int newCversion = parentRecord.stat.getCversion() + 1;
+
+        // 根据不同的类型，设置日志体
         if (type == OpCode.createContainer) {
             request.setTxn(new CreateContainerTxn(path, data, listACL, newCversion));
         } else if (type == OpCode.createTTL) {
@@ -704,6 +738,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         }
 
         TxnHeader hdr = request.getHdr();
+
+        // 临时节点拥有者
         long ephemeralOwner = 0;
         if (createMode.isContainer()) {
             ephemeralOwner = EphemeralType.CONTAINER_EPHEMERAL_OWNER;
@@ -712,6 +748,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } else if (createMode.isEphemeral()) {
             ephemeralOwner = request.sessionId;
         }
+
+        // 把父节点变更记录加入到outstandingChanges中
         StatPersisted s = DataTree.createStat(hdr.getZxid(), hdr.getTime(), ephemeralOwner);
         parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
         parentRecord.childCount++;
@@ -720,6 +758,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         parentRecord.precalculatedDigest = precalculateDigest(
                 DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
         addChangeRecord(parentRecord);
+
+        // 把当前节点变更记录加入到outstandingChanges中
         ChangeRecord nodeRecord = new ChangeRecord(
                 request.getHdr().getZxid(), path, s, 0, listACL);
         nodeRecord.data = data;
@@ -762,6 +802,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     protected void pRequest(Request request) throws RequestProcessorException {
         // LOG.info("Prep>>> cxid = " + request.cxid + " type = " +
         // request.type + " id = 0x" + Long.toHexString(request.sessionId));
+
+        // 清空 日志头和日志内容，下面会重新进行赋值
         request.setHdr(null);
         request.setTxn(null);
 
@@ -770,7 +812,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             case OpCode.createContainer:
             case OpCode.create:
             case OpCode.create2:
+                // 这里new出来的这个对象，只在pRequest2Txn方法中用了，该对象是Record的实现类，表示日志体
                 CreateRequest create2Request = new CreateRequest();
+                // 注意这里会先调用zks.getNextZxid()获取下一个zxid（自增）
                 pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true);
                 break;
             case OpCode.createTTL:
@@ -941,6 +985,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         }
         request.zxid = zks.getZxid();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(Time.currentElapsedTime() - request.prepStartTime);
+
+
         nextProcessor.processRequest(request);
     }
 
@@ -961,7 +1007,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private void validateCreateRequest(String path, CreateMode createMode, Request request, long ttl) throws KeeperException {
-        // 如果
+        // 如果节点类型是TTL，但是服务端没开启支持TTL
         if (createMode.isTTL() && !EphemeralType.extendedEphemeralTypesEnabled()) {
             throw new KeeperException.UnimplementedException();
         }
@@ -970,6 +1016,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } catch (IllegalArgumentException e) {
             throw new BadArgumentsException(path);
         }
+
         if (createMode.isEphemeral()) {
             // Exception is set when local session failed to upgrade
             // so we just need to report the error

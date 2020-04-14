@@ -82,7 +82,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             }
 
             // socket中的数据会读取到incomingBuffer中
-            // 如果incomingBuffer没有剩余可以读取的数据了，表示incomingBuffer中的数据都已经被处理完了，则需要从socket中读取
+            // 如果incomingBuffer没有剩余可以读取的数据了，表示incomingBuffer中的数据都已经被处理完了，则需要重新从socket中读取
             if (!incomingBuffer.hasRemaining()) {
                 incomingBuffer.flip();
 

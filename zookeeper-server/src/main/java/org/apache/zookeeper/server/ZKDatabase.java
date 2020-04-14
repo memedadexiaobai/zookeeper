@@ -315,6 +315,7 @@ public class ZKDatabase {
      * @param request committed request
      */
     public void addCommittedProposal(Request request) {
+
         WriteLock wl = logLock.writeLock();
         try {
             wl.lock();
@@ -328,11 +329,17 @@ public class ZKDatabase {
             }
 
             byte[] data = SerializeUtils.serializeRequest(request);
+
+            //  二阶段提交中的第一阶段
             QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
+
             Proposal p = new Proposal();
             p.packet = pp;
             p.request = request;
+
+            // 把一个请求的提议信息添加到committedLog队列中
             committedLog.add(p);
+
             maxCommittedLog = p.packet.getZxid();
         } finally {
             wl.unlock();

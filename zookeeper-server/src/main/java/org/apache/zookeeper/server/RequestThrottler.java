@@ -230,6 +230,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
             LOG.debug("Shutdown in progress. Request cannot be processed");
             dropRequest(request);
         } else {
+            // 添加到submittedRequests队列中
             submittedRequests.add(request);
         }
     }

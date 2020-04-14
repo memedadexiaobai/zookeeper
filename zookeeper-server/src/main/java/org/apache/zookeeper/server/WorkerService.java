@@ -113,6 +113,7 @@ public class WorkerService {
             return;
         }
 
+        // 这是一个线程，它内部就会负责处理客户端请求
         ScheduledWorkRequest scheduledWorkRequest = new ScheduledWorkRequest(workRequest);
 
         // If we have a worker thread pool, use that; otherwise, do the work
@@ -121,6 +122,12 @@ public class WorkerService {
         if (size > 0) {
             try {
                 // make sure to map negative ids as well to [0, size-1]
+                // id可以是sessionId，表示一个session中的命令固定交给一个线程执行
+
+                // 单机模式下，workers中只有一个线程池，这个线程池有多个线程
+                // 集群模式下，workers中有多个线程池，每个线程池中只有一个线程
+
+                // 所以单机模式下，服务端在处理命令时，这些命令会并发的交给线程来处理
                 int workerNum = ((int) (id % size) + size) % size;
                 ExecutorService worker = workers.get(workerNum);
                 worker.execute(scheduledWorkRequest);
@@ -151,6 +158,7 @@ public class WorkerService {
                     workRequest.cleanup();
                     return;
                 }
+                //
                 workRequest.doWork();
             } catch (Exception e) {
                 LOG.warn("Unexpected exception", e);
@@ -200,9 +208,11 @@ public class WorkerService {
         if (numWorkerThreads > 0) {
             if (threadsAreAssignable) {
                 for (int i = 1; i <= numWorkerThreads; ++i) {
+                    // workers中有numWorkerThreads个线程池，每个线程池中只有一个线程
                     workers.add(Executors.newFixedThreadPool(1, new DaemonThreadFactory(threadNamePrefix, i)));
                 }
             } else {
+                // 一个线程池，这个线程池中有numWorkerThreads个线程
                 workers.add(Executors.newFixedThreadPool(numWorkerThreads, new DaemonThreadFactory(threadNamePrefix)));
             }
         }
