@@ -190,6 +190,7 @@ public class QuorumPeerConfig {
             /* Read entire config file as initial configuration */
             initialConfig = new String(Files.readAllBytes(configFile.toPath()));
 
+            // 解析配置
             parseProperties(cfg);
         } catch (IOException e) {
             throw new ConfigException("Error processing " + path, e);
@@ -322,6 +323,7 @@ public class QuorumPeerConfig {
             } else if (key.equals("electionAlg")) {
                 electionAlg = Integer.parseInt(value);
                 if (electionAlg != 3) {
+                    // 领导者选举只支持3
                     throw new ConfigException("Invalid electionAlg value. Only 3 is supported.");
                 }
             } else if (key.equals("quorumListenOnAllIPs")) {
@@ -431,6 +433,7 @@ public class QuorumPeerConfig {
         // Reset to MIN_SNAP_RETAIN_COUNT if invalid (less than 3)
         // PurgeTxnLog.purge(File, File, int) will not allow to purge less
         // than 3.
+        // 保留快照数不能小于3
         if (snapRetainCount < MIN_SNAP_RETAIN_COUNT) {
             LOG.warn("Invalid autopurge.snapRetainCount: "
                      + snapRetainCount
@@ -486,6 +489,7 @@ public class QuorumPeerConfig {
             throw new IllegalArgumentException("tickTime is not set");
         }
 
+        // sessionTimeout = tickTime * 2
         minSessionTimeout = minSessionTimeout == -1 ? tickTime * 2 : minSessionTimeout;
         maxSessionTimeout = maxSessionTimeout == -1 ? tickTime * 20 : maxSessionTimeout;
 

@@ -120,11 +120,13 @@ public class QuorumPeerMain {
 
     protected void initializeAndRun(String[] args) throws ConfigException, IOException, AdminServerException {
         QuorumPeerConfig config = new QuorumPeerConfig();
+        // 解析配置，
         if (args.length == 1) {
             config.parse(args[0]);
         }
 
         // Start and schedule the the purge task
+        // 开启一个定时器，根据配置清空多余的日志和快照文件
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(
             config.getDataDir(),
             config.getDataLogDir(),
@@ -132,6 +134,7 @@ public class QuorumPeerMain {
             config.getPurgeInterval());
         purgeMgr.start();
 
+        //
         if (args.length == 1 && config.isDistributed()) {
             runFromConfig(config);
         } else {

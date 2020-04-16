@@ -436,6 +436,7 @@ public class FileTxnLog implements TxnLog, Closeable {
         }
 
         // Roll the log file if we exceed the size limit
+        // 当某个log文件的大小超过了txnLogSizeLimit，就会滚动再生成一个log文件
         if (txnLogSizeLimit > 0) {
             long logSize = getCurrentLogSize();
 

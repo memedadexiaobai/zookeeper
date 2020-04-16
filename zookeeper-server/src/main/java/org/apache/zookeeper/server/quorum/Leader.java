@@ -423,6 +423,7 @@ public class Leader extends LearnerMaster {
      */
     static final int INFORMANDACTIVATE = 19;
 
+    // 负责记录正在进行两阶段提交的Proposal，key为zxid
     final ConcurrentMap<Long, Proposal> outstandingProposals = new ConcurrentHashMap<Long, Proposal>();
 
     private final ConcurrentLinkedQueue<Proposal> toBeApplied = new ConcurrentLinkedQueue<Proposal>();
@@ -604,6 +605,7 @@ public class Leader extends LearnerMaster {
                 lastProposed = zk.getZxid();
             }
 
+            // 领导者选举后成为了leader，向其他服务器发送一个NEWLEADER Packet
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -641,6 +643,7 @@ public class Leader extends LearnerMaster {
                 }
             }
 
+            // 当前提议使用哪个验证器进行验证
             newLeaderProposal.addQuorumVerifier(self.getQuorumVerifier());
             if (self.getLastSeenQuorumVerifier().getVersion() > self.getQuorumVerifier().getVersion()) {
                 newLeaderProposal.addQuorumVerifier(self.getLastSeenQuorumVerifier());
@@ -656,6 +659,7 @@ public class Leader extends LearnerMaster {
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
+                // 当前leader给自己一个ack
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -898,6 +902,7 @@ public class Leader extends LearnerMaster {
         // pending all wait for a quorum of old and new config, so it's not possible to get enough acks
         // for an operation without getting enough acks for preceding ops. But in the future if multiple
         // concurrent reconfigs are allowed, this can happen.
+        // 保证按顺序提交操作，
         if (outstandingProposals.containsKey(zxid - 1)) {
             return false;
         }
@@ -952,9 +957,12 @@ public class Leader extends LearnerMaster {
             //turnOffFollowers();
         } else {
             p.request.logLatency(ServerMetrics.getMetrics().QUORUM_ACK_LATENCY);
+            // 两阶段提交中的第三步，向follower节点发送commit请求
             commit(zxid);
+            // 向Observer节点通知当前已经可以提交的提议，提议里包含请求信息
             inform(p);
         }
+        // Leader自己提交
         zk.commitProcessor.commit(p.request);
         if (pendingSyncs.containsKey(zxid)) {
             for (LearnerSyncRequest r : pendingSyncs.remove(zxid)) {
@@ -1186,6 +1194,7 @@ public class Leader extends LearnerMaster {
         sendObserverPacket(buildInformAndActivePacket(proposal.request.zxid, designatedLeader, proposal.packet.getData()));
     }
 
+    // 负责记录一下上次提议的zxid
     long lastProposed;
 
     @Override
@@ -1230,6 +1239,7 @@ public class Leader extends LearnerMaster {
 
         byte[] data = SerializeUtils.serializeRequest(request);
         proposalStats.setLastBufferSize(data.length);
+        // 针对当前Leader接收到的请求，发起两阶段提交中的第一阶段
         QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
 
         Proposal p = new Proposal();
@@ -1249,8 +1259,14 @@ public class Leader extends LearnerMaster {
 
             LOG.debug("Proposing:: {}", request);
 
+            // 记录一下上次提议的zxid
             lastProposed = p.packet.getZxid();
+
+            // 负责记录正在进行两阶段提交的Proposal，key为zxid
             outstandingProposals.put(lastProposed, p);
+
+            // 把提议Packet发送给所有Follower
+            // 这里也不会阻塞，只是把Packet添加到LearnerHandler中的队列中
             sendPacket(pp);
         }
         ServerMetrics.getMetrics().PROPOSAL_COUNT.add(1);
@@ -1519,6 +1535,7 @@ public class Leader extends LearnerMaster {
         }
 
         leaderStartTime = Time.currentElapsedTime();
+        // LeaderZooKeeperServer.startup()
         zk.startup();
         /*
          * Update the election vote here to ensure that all members of the

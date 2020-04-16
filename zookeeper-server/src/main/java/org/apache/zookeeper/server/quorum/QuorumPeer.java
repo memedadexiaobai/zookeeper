@@ -1069,9 +1069,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     @Override
     public synchronized void start() {
+        // 集群模式下，服务启动步骤
+        // 1. 加载DataBase
+        // 2. 启动NIOServerCnxnFactory
+        // 3. 启动adminServer
+        // 4. 初始化领导者选举策略
+        // 5. 调用本类的run方法，开始进行领导者选举，并开始处理客户端请求
+
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
+
         loadDataBase();
         startServerCnxnFactory();
         try {
@@ -1416,6 +1424,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                             roZk.shutdown();
                         }
                     } else {
+                        //
                         try {
                             reconfigFlagClear();
                             if (shuttingDownLE) {
@@ -1462,6 +1471,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     }
                     break;
                 case LEADING:
+                    // 领导者选举完了之后，开始进行Leader服务器的初始化
+                    // leader对应的服务器实现类为LeaderZooKeeperServer
+
                     LOG.info("LEADING");
                     try {
                         setLeader(makeLeader(logFactory));

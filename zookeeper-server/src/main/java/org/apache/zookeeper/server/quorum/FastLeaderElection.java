@@ -937,6 +937,8 @@ public class FastLeaderElection implements Election {
             int notTimeout = minNotificationInterval;
 
             synchronized (this) {
+                // 时钟周期+1
+                // 先投给自己
                 logicalclock.incrementAndGet();
                 updateProposal(getInitId(), getInitLastLoggedZxid(), getPeerEpoch());
             }
@@ -945,6 +947,8 @@ public class FastLeaderElection implements Election {
                 "New election. My id = {}, proposed zxid=0x{}",
                 self.getId(),
                 Long.toHexString(proposedZxid));
+
+            // 发送投票
             sendNotifications();
 
             SyncedLearnerTracker voteSet;
@@ -954,16 +958,20 @@ public class FastLeaderElection implements Election {
              */
 
             while ((self.getPeerState() == ServerState.LOOKING) && (!stop)) {
+
+
                 /*
                  * Remove next notification from queue, times out after 2 times
                  * the termination time
                  */
+                // 要在0.2秒内得到投票
                 Notification n = recvqueue.poll(notTimeout, TimeUnit.MILLISECONDS);
 
                 /*
                  * Sends more notifications if haven't received enough.
                  * Otherwise processes new notification.
                  */
+                //
                 if (n == null) {
                     if (manager.haveDelivered()) {
                         sendNotifications();

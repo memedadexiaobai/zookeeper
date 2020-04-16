@@ -70,14 +70,18 @@ public class ProposalRequestProcessor implements RequestProcessor {
         if (request instanceof LearnerSyncRequest) {
             zks.getLeader().processSync((LearnerSyncRequest) request);
         } else {
+            // nextProcessor为CommitProcessor，只是把request添加到队列中，不会阻塞
             nextProcessor.processRequest(request);
+
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
                 try {
+                    // 先发起提议
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
+                // 再去持久化请求日志（本机）
                 syncProcessor.processRequest(request);
             }
         }

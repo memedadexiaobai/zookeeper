@@ -175,7 +175,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 // poll会阻塞，直到有数据返回
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
+
                 if (si == null) {
+                    // 如果从queuedRequests队列中没有获取到请求了，那么就把直接接收到的请求flush
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
                     flush();
                     si = queuedRequests.take();
@@ -193,6 +195,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // append只是把request添加到stream中
                 // 只有当Request中的hdr为null时才返回false
                 if (zks.getZKDatabase().append(si)) {
+                    System.out.println("append..");
+
                     // 是否应该打快照了
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
@@ -239,6 +243,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // 判断是否可以Flush了
                 // 当累积了maxBatchSize个请求，或者达到某个定时点了就进行持久化
                 if (shouldFlush()) {
+                    System.out.println("ready flush..");
                     flush();
                 }
 
@@ -254,6 +259,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         if (this.toFlush.isEmpty()) {
             return;
         }
+
+        System.out.println("realy flush..");
 
         ServerMetrics.getMetrics().BATCH_SIZE.add(toFlush.size());
 

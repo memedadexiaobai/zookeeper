@@ -44,6 +44,8 @@ class AckRequestProcessor implements RequestProcessor {
         QuorumPeer self = leader.self;
         if (self != null) {
             request.logLatency(ServerMetrics.getMetrics().PROPOSAL_ACK_CREATION_LATENCY);
+
+            // 相当于给自己发送了一个ack
             leader.processAck(self.getId(), request.zxid, null);
         } else {
             LOG.error("Null QuorumPeer");
