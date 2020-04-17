@@ -1098,9 +1098,12 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             zkDb.loadDataBase();
 
             // load the epochs
+            // 当前dataTree中的最新的zxid
             long lastProcessedZxid = zkDb.getDataTree().lastProcessedZxid;
+            // 当前dataTree中的epoch
             long epochOfZxid = ZxidUtils.getEpochFromZxid(lastProcessedZxid);
             try {
+                // currentEpoch文件中的epoch
                 currentEpoch = readLongFromFile(CURRENT_EPOCH_FILENAME);
             } catch (FileNotFoundException e) {
                 // pick a reasonable epoch number
@@ -1114,13 +1117,18 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     currentEpoch);
                 writeLongToFile(CURRENT_EPOCH_FILENAME, currentEpoch);
             }
+
+            // 当前dataTree中的epoch 大于 currentEpoch文件中的epoch，则是有问题的
+            // currentEpoch文件中的epoch小于datatree中的epoch，是有问题的
             if (epochOfZxid > currentEpoch) {
                 throw new IOException("The current epoch, "
                                       + ZxidUtils.zxidToString(currentEpoch)
                                       + ", is older than the last zxid, "
                                       + lastProcessedZxid);
             }
+
             try {
+                // acceptedEpoch文件中的epoch
                 acceptedEpoch = readLongFromFile(ACCEPTED_EPOCH_FILENAME);
             } catch (FileNotFoundException e) {
                 // pick a reasonable epoch number
@@ -1134,12 +1142,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                     acceptedEpoch);
                 writeLongToFile(ACCEPTED_EPOCH_FILENAME, acceptedEpoch);
             }
+
+            // acceptedEpoch文件中的epoch 小于 currentEpoch文件中的epoch也是有问题的
             if (acceptedEpoch < currentEpoch) {
                 throw new IOException("The accepted epoch, "
                                       + ZxidUtils.zxidToString(acceptedEpoch)
                                       + " is less than the current epoch, "
                                       + ZxidUtils.zxidToString(currentEpoch));
             }
+
+            // 所以正常的epoch大小关系为：
+            // dataTree.epoch < currentEpoch文件.epoch < acceptedEpoch文件.epoch
         } catch (IOException ie) {
             LOG.error("Unable to load database on disk", ie);
             throw new RuntimeException("Unable to run quorum server ", ie);

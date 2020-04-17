@@ -455,7 +455,7 @@ public class LearnerHandler extends ZooKeeperThread {
     @Override
     public void run() {
         try {
-            //
+
             learnerMaster.addLearnerHandler(this);
             tickOfNextAckDeadline = learnerMaster.getTickOfInitialAckDeadline();
 
@@ -467,6 +467,7 @@ public class LearnerHandler extends ZooKeeperThread {
             QuorumPacket qp = new QuorumPacket();
             ia.readRecord(qp, "packet");
 
+
             messageTracker.trackReceived(qp.getType());
             if (qp.getType() != Leader.FOLLOWERINFO && qp.getType() != Leader.OBSERVERINFO) {
                 LOG.error("First packet {} is not FOLLOWERINFO or OBSERVERINFO!", qp.toString());
@@ -477,16 +478,21 @@ public class LearnerHandler extends ZooKeeperThread {
             if (learnerMaster instanceof ObserverMaster && qp.getType() != Leader.OBSERVERINFO) {
                 throw new IOException("Non observer attempting to connect to ObserverMaster. type = " + qp.getType());
             }
+
+            //
             byte[] learnerInfoData = qp.getData();
             if (learnerInfoData != null) {
                 ByteBuffer bbsid = ByteBuffer.wrap(learnerInfoData);
                 if (learnerInfoData.length >= 8) {
+                    // learner的serverid
                     this.sid = bbsid.getLong();
                 }
                 if (learnerInfoData.length >= 12) {
+                    // protocolVersion = 0x10000
                     this.version = bbsid.getInt(); // protocolVersion
                 }
                 if (learnerInfoData.length >= 20) {
+                    // QuorumVerifier的version
                     long configVersion = bbsid.getLong();
                     if (configVersion > learnerMaster.getQuorumVerifierVersion()) {
                         throw new IOException("Follower is ahead of the leader (has a later activated configuration)");
@@ -496,6 +502,7 @@ public class LearnerHandler extends ZooKeeperThread {
                 this.sid = learnerMaster.getAndDecrementFollowerCounter();
             }
 
+            // 获取follower信息
             String followerInfo = learnerMaster.getPeerInfo(this.sid);
             if (followerInfo.isEmpty()) {
                 LOG.info(
@@ -506,18 +513,24 @@ public class LearnerHandler extends ZooKeeperThread {
                 LOG.info("Follower sid: {} : info : {}", this.sid, followerInfo);
             }
 
+            // 是否是observer
             if (qp.getType() == Leader.OBSERVERINFO) {
                 learnerType = LearnerType.OBSERVER;
             }
 
+
             learnerMaster.registerLearnerHandlerBean(this, sock);
 
+            // 拿到Learner节点当前的epoch
             long lastAcceptedEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
 
             long peerLastZxid;
             StateSummary ss = null;
+
             long zxid = qp.getZxid();
+            // 如果Learner的epoch大于或等于Leader的epoch，则Leader的epoch在Learner的基础上加1
             long newEpoch = learnerMaster.getEpochToPropose(this.getSid(), lastAcceptedEpoch);
+            // 基于新的epoch，生成该epoch下的第一个zxid
             long newLeaderZxid = ZxidUtils.makeZxid(newEpoch, 0);
 
             if (this.getVersion() < 0x10000) {
@@ -529,21 +542,32 @@ public class LearnerHandler extends ZooKeeperThread {
             } else {
                 byte[] ver = new byte[4];
                 ByteBuffer.wrap(ver).putInt(0x10000);
+
+                // 发送leader信息，主要就包括leader新产生的newLeaderZxid
                 QuorumPacket newEpochPacket = new QuorumPacket(Leader.LEADERINFO, newLeaderZxid, ver, null);
                 oa.writeRecord(newEpochPacket, "packet");
                 messageTracker.trackSent(Leader.LEADERINFO);
                 bufferedOutput.flush();
+
+                // 阻塞接收learner对应epoch的ack
                 QuorumPacket ackEpochPacket = new QuorumPacket();
                 ia.readRecord(ackEpochPacket, "packet");
+
                 messageTracker.trackReceived(ackEpochPacket.getType());
                 if (ackEpochPacket.getType() != Leader.ACKEPOCH) {
                     LOG.error("{} is not ACKEPOCH", ackEpochPacket.toString());
                     return;
                 }
+
+                // 记录当前的epoch和对应的zxid
                 ByteBuffer bbepoch = ByteBuffer.wrap(ackEpochPacket.getData());
                 ss = new StateSummary(bbepoch.getInt(), ackEpochPacket.getZxid());
+
+                // 这里会阻塞，只有当leader接收到的ack过半了才会解阻塞
                 learnerMaster.waitForEpochAck(this.getSid(), ss);
             }
+
+            // 当leader节点和follower节点都协商好epoch后，就会执行下面的流程
             peerLastZxid = ss.getLastZxid();
 
             // Take any necessary action if we need to send TRUNC or DIFF

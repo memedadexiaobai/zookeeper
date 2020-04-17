@@ -1422,6 +1422,9 @@ public class Leader extends LearnerMaster {
             if (!waitingForNewEpoch) {
                 return epoch;
             }
+
+            // 如果follower的epoch大于或等于leader的epoch
+            // 则leader节点在follower的epoch基础上加+1
             if (lastAcceptedEpoch >= epoch) {
                 epoch = lastAcceptedEpoch + 1;
             }
@@ -1481,10 +1484,13 @@ public class Leader extends LearnerMaster {
                 }
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+
+            // 当leader收到的关于epoch的ack过半了，则唤醒
             if (electingFollowers.contains(self.getId()) && verifier.containsQuorum(electingFollowers)) {
                 electionFinished = true;
                 electingFollowers.notifyAll();
             } else {
+                // 如果没有超过则阻塞
                 long start = Time.currentElapsedTime();
                 long cur = start;
                 long end = start + self.getInitLimit() * self.getTickTime();

@@ -86,11 +86,16 @@ public class Follower extends Learner {
             try {
                 // Follower节点向Leader节点建立socket连接
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
+
                 connectionTime = System.currentTimeMillis();
+
+                // 向Leader节点发送FOLLOWERINFO数据
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
+
                 if (self.isReconfigStateChange()) {
                     throw new Exception("learned about role change");
                 }
+
                 //check to see if the leader zxid is lower than ours
                 //this should never happen but is just a safety check
                 long newEpoch = ZxidUtils.getEpochFromZxid(newEpochZxid);
@@ -120,6 +125,8 @@ public class Follower extends Learner {
                 } else {
                     om = null;
                 }
+
+
                 // create a reusable packet to reduce gc impact
                 QuorumPacket qp = new QuorumPacket();
                 while (this.isRunning()) {

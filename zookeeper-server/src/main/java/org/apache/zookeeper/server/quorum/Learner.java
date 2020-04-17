@@ -279,9 +279,13 @@ public class Learner {
         ExecutorService executor = Executors.newFixedThreadPool(addresses.size());
         CountDownLatch latch = new CountDownLatch(addresses.size());
         AtomicReference<Socket> socket = new AtomicReference<>(null);
+
+        // 向leader建立一个socket连接
         addresses.stream().map(address -> new LeaderConnector(address, socket, latch)).forEach(executor::submit);
 
         try {
+            // 上面会开启线程去向leader节点建立socket连接，一旦建立成功会countdown
+            // 然后这里就会解阻塞
             latch.await();
         } catch (InterruptedException e) {
             LOG.warn("Interrupted while trying to connect to Leader", e);
@@ -339,10 +343,12 @@ public class Learner {
             } catch (Exception e) {
                 LOG.error("Failed connect to {}", address, e);
             } finally {
+                // 注意这里..
                 latch.countDown();
             }
         }
 
+        // learner向leader建立socket连接
         private Socket connectToLeader() throws IOException, X509Exception, InterruptedException {
             Socket sock = createSocket();
 
@@ -358,6 +364,7 @@ public class Learner {
             int remainingTimeout;
             long startNanoTime = nanoTime();
 
+            // 连接leader，重试5次
             for (int tries = 0; tries < 5 && socket.get() == null; tries++) {
                 try {
                     // recalculate the init limit time because retries sleep for 1000 milliseconds
@@ -435,9 +442,11 @@ public class Learner {
         /*
          * Send follower info, including last zxid and sid
          */
+        // DataBase中的最新zxid
         long lastLoggedZxid = self.getLastLoggedZxid();
         QuorumPacket qp = new QuorumPacket();
         qp.setType(pktType);
+        // 从acceptedEpoch文件中拿到epoch
         qp.setZxid(ZxidUtils.makeZxid(self.getAcceptedEpoch(), 0));
 
         /*
@@ -450,15 +459,24 @@ public class Learner {
         qp.setData(bsid.toByteArray());
 
         writePacket(qp, true);
+        // 读取leader的响应
         readPacket(qp);
+
+        // 接收到leader发送过来的新epoch
         final long newEpoch = ZxidUtils.getEpochFromZxid(qp.getZxid());
+
         if (qp.getType() == Leader.LEADERINFO) {
+            //
             // we are connected to a 1.0 server so accept the new epoch and read the next packet
             leaderProtocolVersion = ByteBuffer.wrap(qp.getData()).getInt();
             byte[] epochBytes = new byte[4];
             final ByteBuffer wrappedEpochBytes = ByteBuffer.wrap(epochBytes);
+
+            // leader新产生的epoch大于learner的acceptedEpoch文件中的epoch
             if (newEpoch > self.getAcceptedEpoch()) {
+                // 把learner中的currentEpoch文件中的epoch返回给leader
                 wrappedEpochBytes.putInt((int) self.getCurrentEpoch());
+                // 则把acceptedEpoch文件中的epoch改了
                 self.setAcceptedEpoch(newEpoch);
             } else if (newEpoch == self.getAcceptedEpoch()) {
                 // since we have already acked an epoch equal to the leaders, we cannot ack
@@ -472,8 +490,12 @@ public class Learner {
                                       + " is less than accepted epoch, "
                                       + self.getAcceptedEpoch());
             }
+
+            // 向leader节点发送ACKEPOCH, epochBytes表示learner中的currentEpoch文件中的epoch
             QuorumPacket ackNewEpoch = new QuorumPacket(Leader.ACKEPOCH, lastLoggedZxid, epochBytes, null);
             writePacket(ackNewEpoch, true);
+
+            // 得到一个当前epoch下的第一个zxid
             return ZxidUtils.makeZxid(newEpoch, 0);
         } else {
             if (newEpoch > self.getAcceptedEpoch()) {
