@@ -72,6 +72,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 // We want to queue the request to be processed before we submit
                 // the request to the leader so that we are ready to receive
                 // the response
+                // 当Follower节点接收到一个请求时，先把这个请求加入到队列中进行等待
                 nextProcessor.processRequest(request);
 
                 // We now ship the request to the leader. As with all
@@ -79,6 +80,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 // path, but different from others, we need to keep track
                 // of the sync operations this follower has pending, so we
                 // add it to pendingSyncs.
+                // 如果是写请求，除开把当前写请求加入队列等待结果之外，还需要把这个请求转发给leader节点
                 switch (request.type) {
                 case OpCode.sync:
                     zks.pendingSyncs.add(request);
@@ -95,6 +97,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 case OpCode.setACL:
                 case OpCode.multi:
                 case OpCode.check:
+                    // 同步发送这个请求
                     zks.getFollower().request(request);
                     break;
                 case OpCode.createSession:

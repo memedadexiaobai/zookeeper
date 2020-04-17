@@ -159,6 +159,7 @@ public class Learner {
      * @throws IOException
      */
     void writePacket(QuorumPacket pp, boolean flush) throws IOException {
+
         synchronized (leaderOs) {
             if (pp != null) {
                 messageTracker.trackSent(pp.getType());
@@ -213,6 +214,7 @@ public class Learner {
             oa.write(b);
         }
         oa.close();
+
         QuorumPacket qp = new QuorumPacket(Leader.REQUEST, -1, baos.toByteArray(), request.authInfo);
         writePacket(qp, true);
     }

@@ -455,6 +455,7 @@ public class LearnerHandler extends ZooKeeperThread {
     @Override
     public void run() {
         try {
+            //
             learnerMaster.addLearnerHandler(this);
             tickOfNextAckDeadline = learnerMaster.getTickOfInitialAckDeadline();
 
@@ -462,6 +463,7 @@ public class LearnerHandler extends ZooKeeperThread {
             bufferedOutput = new BufferedOutputStream(sock.getOutputStream());
             oa = BinaryOutputArchive.getArchive(bufferedOutput);
 
+            // 从socket中读取数据（Follower节点发送过来的数据）
             QuorumPacket qp = new QuorumPacket();
             ia.readRecord(qp, "packet");
 

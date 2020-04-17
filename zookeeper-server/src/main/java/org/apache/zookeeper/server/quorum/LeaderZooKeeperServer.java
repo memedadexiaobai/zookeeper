@@ -67,7 +67,6 @@ public class LeaderZooKeeperServer extends QuorumZooKeeperServer {
         // ProposalRequestProcessor --> CommitProcessor -->
         // Leader.ToBeAppliedRequestProcessor --> FinalRequestProcessor
 
-
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
         RequestProcessor toBeAppliedProcessor = new Leader.ToBeAppliedRequestProcessor(finalProcessor, getLeader());
         commitProcessor = new CommitProcessor(toBeAppliedProcessor, Long.toString(getServerId()), false, getZooKeeperServerListener());

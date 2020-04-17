@@ -290,6 +290,7 @@ public class Leader extends LearnerMaster {
             addresses = self.getQuorumAddress().getAllAddresses();
         }
 
+        // 当前机器用来和Follower节点进行socket连接的地址
         addresses.stream()
           .map(address -> createServerSocket(address, self.shouldUsePortUnification(), self.isSslQuorum()))
           .filter(Optional::isPresent)
@@ -447,9 +448,11 @@ public class Leader extends LearnerMaster {
         @Override
         public void run() {
             if (!stop.get() && !serverSockets.isEmpty()) {
+
                 ExecutorService executor = Executors.newFixedThreadPool(serverSockets.size());
                 CountDownLatch latch = new CountDownLatch(serverSockets.size());
 
+                // 开启一个线程监听socket连接，线程类LearnerCnxAcceptorHandler
                 serverSockets.forEach(serverSocket ->
                         executor.submit(new LearnerCnxAcceptorHandler(serverSocket, latch)));
 
@@ -491,6 +494,7 @@ public class Leader extends LearnerMaster {
                     Thread.currentThread().setName("LearnerCnxAcceptorHandler-" + serverSocket.getLocalSocketAddress());
 
                     while (!stop.get()) {
+                        // 接收learner节点发过来的socket连接
                         acceptConnections();
                     }
                 } catch (Exception e) {
@@ -516,6 +520,8 @@ public class Leader extends LearnerMaster {
                     socket.setTcpNoDelay(nodelay);
 
                     BufferedInputStream is = new BufferedInputStream(socket.getInputStream());
+
+                    // 每接收到一个Learner的socket连接，就开启一个LearnerHandler连接
                     LearnerHandler fh = new LearnerHandler(socket, is, Leader.this);
                     fh.start();
                 } catch (SocketException e) {
@@ -592,6 +598,7 @@ public class Leader extends LearnerMaster {
 
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
+            //
             // Start thread that waits for connection requests from
             // new followers.
             cnxAcceptor = new LearnerCnxAcceptor();
@@ -958,7 +965,7 @@ public class Leader extends LearnerMaster {
         } else {
             p.request.logLatency(ServerMetrics.getMetrics().QUORUM_ACK_LATENCY);
             // 两阶段提交中的第三步，向follower节点发送commit请求
-            commit(zxid);
+            commit(zxid); // 异步
             // 向Observer节点通知当前已经可以提交的提议，提议里包含请求信息
             inform(p);
         }

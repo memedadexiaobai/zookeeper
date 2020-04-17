@@ -93,6 +93,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
     /**
      * Incoming requests that are waiting on a commit,
      * contained in order of arrival
+     * 保留着需要等待commit的请求
      */
     protected final LinkedBlockingQueue<Request> queuedWriteRequests = new LinkedBlockingQueue<>();
 
@@ -211,10 +212,14 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                  */
 
                 // committedRequests不为空，表示已经有请求被提交了(已经向follower节点发送了commit命令，leader自己还没有提交这个请求)
-                // 等待被提交
+                // 等待被提交的请求，来自各个客户端发送的写请求
                 commitIsWaiting = !committedRequests.isEmpty();
-                // queuedRequests表示已经发起了提议的请求，待处理
+
+                // queuedRequests表示待处理的请求（包括读请求和写请求）
+                // 包含了当前服务接收到的所有请求
+                // committedRequests队列中的请求正常情况下在queuedRequests队列中都存在
                 requestsToProcess = queuedRequests.size();
+
 
                 // 没有待处理的请求，并且也没有等待被提交的请求，那就阻塞等待
                 // Avoid sync if we have something to do
@@ -236,7 +241,6 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
 
                 long time = Time.currentElapsedTime();
 
-                //
                 /*
                  * Processing up to requestsToProcess requests from the incoming
                  * queue (queuedRequests). If maxReadBatchSize is set then no
@@ -257,9 +261,12 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                         // 当处理的读请求数量超过了maxReadBatchSize，就暂时不会从queuedRequests中获取请求进行处理了
                        && (maxReadBatchSize < 0 || readsProcessed <= maxReadBatchSize)
                        && (request = queuedRequests.poll()) != null) {
+
+
                     requestsToProcess--;
 
                     // 当前请求是否是需要进行两阶段提交的请求，或者当前request对应的session已经有其他请求了
+                    // 如果某一个请求是读请求，但是这个请求对应的session在之前有还没提交的写请求，那么该读请求也得加到pendingRequests
                     if (needCommit(request) || pendingRequests.containsKey(request.sessionId)) {
 
                         // 添加请求到sessionid对应的队列中
@@ -307,6 +314,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                 /*
                  * Handle commits, if any.
                  */
+                // 有待提交的请求
                 if (commitIsWaiting && !stopped) {
                     /*
                      * Drain outstanding reads
@@ -325,8 +333,10 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                     Set<Long> queuesToDrain = new HashSet<>();
                     long startWriteTime = Time.currentElapsedTime();
                     int commitsProcessed = 0;
+
                     while (commitIsWaiting && !stopped && commitsToProcess > 0) {
 
+                        // 从committedRequests队列中获得一个请求（队头），拿到的这个请求表示两阶段提交已经执行完了，只要本地提交就可以了
                         // Process committed head
                         request = committedRequests.peek();
 
@@ -340,9 +350,12 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                         if (!queuedWriteRequests.isEmpty()
                             && queuedWriteRequests.peek().sessionId == request.sessionId
                             && queuedWriteRequests.peek().cxid == request.cxid) {
+
+
                             /*
                              * Commit matches the earliest write in our write queue.
                              */
+                            // 拿到当前请求对应的sessionId对应的请求队列
                             Deque<Request> sessionQueue = pendingRequests.get(request.sessionId);
                             ServerMetrics.getMetrics().PENDING_SESSION_QUEUE_SIZE.add(pendingRequests.size());
                             if (sessionQueue == null || sessionQueue.isEmpty() || !needCommit(sessionQueue.peek())) {
@@ -355,6 +368,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                             } else {
                                 ServerMetrics.getMetrics().REQUESTS_IN_SESSION_QUEUE.add(sessionQueue.size());
                                 // If session queue != null, then it is also not empty.
+                                // 从sessionQueue移除请求
                                 Request topPending = sessionQueue.poll();
                                 /*
                                  * Generally, we want to send to the next processor our version of the request,
@@ -375,10 +389,13 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                                 request = topPending;
                                 // Only decrement if we take a request off the queue.
                                 numWriteQueuedRequests.decrementAndGet();
+                                // 从queuedWriteRequests队列中移除
                                 queuedWriteRequests.poll();
                                 queuesToDrain.add(request.sessionId);
                             }
                         }
+
+
                         /*
                          * Pull the request off the commit queue, now that we are going
                          * to process it.
@@ -388,6 +405,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                         commitsProcessed++;
 
                         // Process the write inline.
+                        // 处理写请求，交给下一个nextProcessor
                         processWrite(request);
 
                         commitIsWaiting = !committedRequests.isEmpty();
@@ -402,16 +420,23 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                      */
                     readsProcessed = 0;
                     for (Long sessionId : queuesToDrain) {
+                        //
                         Deque<Request> sessionQueue = pendingRequests.get(sessionId);
+
                         int readsAfterWrite = 0;
+
+                        // 循环当前sessionId对应的请求队列
                         while (!stopped && !sessionQueue.isEmpty() && !needCommit(sessionQueue.peek())) {
                             numReadQueuedRequests.decrementAndGet();
                             sendToNextProcessor(sessionQueue.poll());
                             readsAfterWrite++;
                         }
+
                         ServerMetrics.getMetrics().READS_AFTER_WRITE_IN_SESSION_QUEUE.add(readsAfterWrite);
+                        // 一个写请求后的读请求
                         readsProcessed += readsAfterWrite;
 
+                        // 移除
                         // Remove empty queues
                         if (sessionQueue.isEmpty()) {
                             pendingRequests.remove(sessionId);
@@ -610,6 +635,8 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
         wakeup();
     }
 
+    // 这个方法会被Leader、Follower、Observer三个角色都调用到
+    //
     @Override
     public void processRequest(Request request) {
         if (stopped) {
