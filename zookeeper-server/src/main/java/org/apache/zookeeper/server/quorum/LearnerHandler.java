@@ -529,7 +529,10 @@ public class LearnerHandler extends ZooKeeperThread {
 
             long zxid = qp.getZxid();
             // 如果Learner的epoch大于或等于Leader的epoch，则Leader的epoch在Learner的基础上加1
+            // 当前learnerHandler线程已经接收到了对应Learner节点上的epoch，等待其他learnerHandler线程接收到对应Learner节点上的epoch信息
+            // 等待leader统一epoch
             long newEpoch = learnerMaster.getEpochToPropose(this.getSid(), lastAcceptedEpoch);
+
             // 基于新的epoch，生成该epoch下的第一个zxid
             long newLeaderZxid = ZxidUtils.makeZxid(newEpoch, 0);
 
@@ -559,19 +562,21 @@ public class LearnerHandler extends ZooKeeperThread {
                     return;
                 }
 
-                // 记录当前的epoch和对应的zxid
+                // 记录当前Learner的epoch和对应的zxid
                 ByteBuffer bbepoch = ByteBuffer.wrap(ackEpochPacket.getData());
                 ss = new StateSummary(bbepoch.getInt(), ackEpochPacket.getZxid());
 
-                // 这里会阻塞，只有当leader接收到的ack过半了才会解阻塞
+                // 当前learner线程已经接受到了对应learner发过来的ACKEPOCH请求，等待其他learner
                 learnerMaster.waitForEpochAck(this.getSid(), ss);
             }
 
-            // 当leader节点和follower节点都协商好epoch后，就会执行下面的流程
             peerLastZxid = ss.getLastZxid();
+
+            // 当leader节点和follower节点都协商好epoch后(已经确认好epoch了)，就会执行下面的流程（同步数据）
 
             // Take any necessary action if we need to send TRUNC or DIFF
             // startForwarding() will be called in all cases
+            // peerLastZxid表示Follower节点中目前最近的zxid
             boolean needSnap = syncFollower(peerLastZxid, learnerMaster);
 
             // syncs between followers and the leader are exempt from throttling because it
@@ -579,6 +584,7 @@ public class LearnerHandler extends ZooKeeperThread {
             // are counted as concurrent syncs though
             boolean exemptFromThrottle = getLearnerType() != LearnerType.OBSERVER;
             /* if we are not truncating or sending a diff just send a snapshot */
+            // 需要进行快照
             if (needSnap) {
                 syncThrottler = learnerMaster.getLearnerSnapSyncThrottler();
                 syncThrottler.beginSync(exemptFromThrottle);
@@ -624,13 +630,18 @@ public class LearnerHandler extends ZooKeeperThread {
             bufferedOutput.flush();
 
             // Start thread that blast packets in the queue to learner
+            // 待同步的数据是先发在队列中的，这里就会开启一个线程去发送这些数据
+            // 并且开启这个线程后，后续流程中想要发送给Learner的数据，只要添加到queuedPackets队列中即可
+            // 这里是异步
             startSendingPackets();
+
 
             /*
              * Have to wait for the first ACK, wait until
              * the learnerMaster is ready, and only then we can
              * start processing messages.
              */
+
             qp = new QuorumPacket();
             ia.readRecord(qp, "packet");
 
@@ -642,6 +653,8 @@ public class LearnerHandler extends ZooKeeperThread {
 
             LOG.debug("Received NEWLEADER-ACK message from {}", sid);
 
+            // 当前learner已经同步完数据了，阻塞等待对应learner发过来的ACK请求，已经等待其他learner完成数据同步过程并发送ACK请求
+            // 这里会阻塞
             learnerMaster.waitForNewLeaderAck(getSid(), qp.getZxid());
 
             syncLimitCheck.start();
@@ -652,9 +665,11 @@ public class LearnerHandler extends ZooKeeperThread {
             // now that the ack has been processed expect the syncLimit
             sock.setSoTimeout(learnerMaster.syncTimeout());
 
+
             /*
              * Wait until learnerMaster starts up
              */
+            // 等待leader节点启动完
             learnerMaster.waitForStartup();
 
             // Mutation packets will be queued during the serialize,
@@ -664,6 +679,7 @@ public class LearnerHandler extends ZooKeeperThread {
             LOG.debug("Sending UPTODATE message to {}", sid);
             queuedPackets.add(new QuorumPacket(Leader.UPTODATE, -1, null, null));
 
+            // 从对应的Learner那里接收数据
             while (true) {
                 qp = new QuorumPacket();
                 ia.readRecord(qp, "packet");
@@ -687,6 +703,7 @@ public class LearnerHandler extends ZooKeeperThread {
 
                 switch (qp.getType()) {
                 case Leader.ACK:
+                    // 两阶段提交中的ack
                     if (this.learnerType == LearnerType.OBSERVER) {
                         LOG.debug("Received ACK from Observer {}", this.sid);
                     }
@@ -694,6 +711,7 @@ public class LearnerHandler extends ZooKeeperThread {
                     learnerMaster.processAck(this.sid, qp.getZxid(), sock.getLocalSocketAddress());
                     break;
                 case Leader.PING:
+                    // 心跳
                     // Process the touches
                     ByteArrayInputStream bis = new ByteArrayInputStream(qp.getData());
                     DataInputStream dis = new DataInputStream(bis);
@@ -708,6 +726,7 @@ public class LearnerHandler extends ZooKeeperThread {
                     learnerMaster.revalidateSession(qp, this);
                     break;
                 case Leader.REQUEST:
+                    // 转发给leader的请求
                     bb = ByteBuffer.wrap(qp.getData());
                     sessionId = bb.getLong();
                     cxid = bb.getInt();
@@ -809,18 +828,28 @@ public class LearnerHandler extends ZooKeeperThread {
          * zxid in our history. In this case, we will ignore TRUNC logic and
          * always send DIFF if we have old enough history
          */
+
+        // peerLastZxid表示当前Learner中最近的zxid
+
         boolean isPeerNewEpochZxid = (peerLastZxid & 0xffffffffL) == 0;
         // Keep track of the latest zxid which already queued
         long currentZxid = peerLastZxid;
         boolean needSnap = true;
+
+        // Leader上Database
         ZKDatabase db = learnerMaster.getZKDatabase();
         boolean txnLogSyncEnabled = db.isTxnLogSyncEnabled();
+
         ReentrantReadWriteLock lock = db.getLogLock();
         ReadLock rl = lock.readLock();
         try {
             rl.lock();
+
+             // committedLog队列是用来保存最近一段已经被提交了的请求日志
+            // committedLog队列中记录的最大和最小的zxid
             long maxCommittedLog = db.getmaxCommittedLog();
             long minCommittedLog = db.getminCommittedLog();
+            // 当前DataTree中最新的zxid
             long lastProcessedZxid = db.getDataTreeLastProcessedZxid();
 
             LOG.info("Synchronizing with Learner sid: {} maxCommittedLog=0x{}"
@@ -832,6 +861,8 @@ public class LearnerHandler extends ZooKeeperThread {
                      Long.toHexString(lastProcessedZxid),
                      Long.toHexString(peerLastZxid));
 
+            // 如果committedLog队列为空，只能基于DataTree来同步了
+            // 我们先考虑committedLog队列不为空的情况
             if (db.getCommittedLog().isEmpty()) {
                 /*
                  * It is possible that committedLog is empty. In that case
@@ -867,25 +898,33 @@ public class LearnerHandler extends ZooKeeperThread {
                 // Force learnerMaster to use snapshot to sync with follower
                 LOG.warn("Forcing snapshot sync - should not see this in production");
             } else if (lastProcessedZxid == peerLastZxid) {
+                // 如果Leader的DataTree中最近zxid 等于 Learner的最新zxid，那么就不用同步了
+
                 // Follower is already sync with us, send empty diff
                 LOG.info(
                     "Sending DIFF zxid=0x{} for peer sid: {}",
                     Long.toHexString(peerLastZxid),
                     getSid());
+                //
                 queueOpPacket(Leader.DIFF, peerLastZxid);
                 needOpPacket = false;
                 needSnap = false;
             } else if (peerLastZxid > maxCommittedLog && !isPeerNewEpochZxid) {
+                // 如果Learner的最新zxid 大于 committedLog队列中的最大的zxid，则表示Learner上的数据比Leader新
                 // Newer than committedLog, send trunc and done
                 LOG.debug(
                     "Sending TRUNC to follower zxidToSend=0x{} for peer sid:{}",
                     Long.toHexString(maxCommittedLog),
                     getSid());
+                // 发送删除请求
                 queueOpPacket(Leader.TRUNC, maxCommittedLog);
                 currentZxid = maxCommittedLog;
                 needOpPacket = false;
                 needSnap = false;
             } else if ((maxCommittedLog >= peerLastZxid) && (minCommittedLog <= peerLastZxid)) {
+                // 如果 committedLog队列中的最大的zxid >=  Learner的最新zxid >= committedLog队列中的最小的zxid
+                // 那就只要把committedLog队列中的一部分CommittedLog发送给Learner即可
+
                 // Follower is within commitLog range
                 LOG.info("Using committedLog for peer sid: {}", getSid());
                 Iterator<Proposal> itr = db.getCommittedLog().iterator();
@@ -893,6 +932,8 @@ public class LearnerHandler extends ZooKeeperThread {
                 needSnap = false;
             } else if (peerLastZxid < minCommittedLog && txnLogSyncEnabled) {
                 // Use txnlog and committedLog to sync
+
+                // 如果 Learner的最新zxid < committedLog队列中的最小的zxid 并且开启了日志同步
 
                 // Calculate sizeLimit that we allow to retrieve txnlog from disk
                 long sizeLimit = db.calculateTxnLogSizeLimit();
@@ -926,6 +967,7 @@ public class LearnerHandler extends ZooKeeperThread {
                     txnProposalItr.close();
                 }
             } else {
+                // 否则就进行快照同步
                 LOG.warn(
                     "Unhandled scenario for peer sid: {} maxCommittedLog=0x{}"
                         + " minCommittedLog=0x{} lastProcessedZxid=0x{}"
@@ -1095,6 +1137,7 @@ public class LearnerHandler extends ZooKeeperThread {
             return;
         }
         long id;
+        // leader主动向follower节点发送ping，并携带leader上最近的zxid
         if (syncLimitCheck.check(System.nanoTime())) {
             id = learnerMaster.getLastProposed();
             QuorumPacket ping = new QuorumPacket(Leader.PING, id, null, null);

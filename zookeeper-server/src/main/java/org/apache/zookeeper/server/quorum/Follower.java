@@ -90,6 +90,7 @@ public class Follower extends Learner {
                 connectionTime = System.currentTimeMillis();
 
                 // 向Leader节点发送FOLLOWERINFO数据
+                // 并且从得到当前集群统一的epoch
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
 
                 if (self.isReconfigStateChange()) {
@@ -99,6 +100,8 @@ public class Follower extends Learner {
                 //check to see if the leader zxid is lower than ours
                 //this should never happen but is just a safety check
                 long newEpoch = ZxidUtils.getEpochFromZxid(newEpochZxid);
+
+                // 如果发现集群统一的epoch比我自己要小，那就有问题
                 if (newEpoch < self.getAcceptedEpoch()) {
                     LOG.error("Proposed leader epoch "
                               + ZxidUtils.zxidToString(newEpochZxid)
@@ -106,11 +109,18 @@ public class Follower extends Learner {
                               + ZxidUtils.zxidToString(self.getAcceptedEpoch()));
                     throw new IOException("Error: Epoch of leader is lower");
                 }
+
+                // 如果集群统一的epoch等于我自己的，或大于我自己的
+
                 long startTime = Time.currentElapsedTime();
                 try {
                     self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
                     self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
+
+                    // 与leader同步数据
                     syncWithLeader(newEpochZxid);
+
+
                     self.setZabState(QuorumPeer.ZabState.BROADCAST);
                     completedSync = true;
                 } finally {
@@ -127,10 +137,12 @@ public class Follower extends Learner {
                 }
 
 
+                // Follower节点阻塞接收Leader节点发送过来的数据
                 // create a reusable packet to reduce gc impact
                 QuorumPacket qp = new QuorumPacket();
                 while (this.isRunning()) {
                     readPacket(qp);
+                    // 处理
                     processPacket(qp);
                 }
             } catch (Exception e) {
@@ -174,6 +186,7 @@ public class Follower extends Learner {
             TxnHeader hdr = logEntry.getHeader();
             Record txn = logEntry.getTxn();
             TxnDigest digest = logEntry.getDigest();
+            //
             if (hdr.getZxid() != lastQueued + 1) {
                 LOG.warn(
                     "Got zxid 0x{} expected 0x{}",
@@ -188,7 +201,9 @@ public class Follower extends Learner {
                 self.setLastSeenQuorumVerifier(qv, true);
             }
 
+            // 把接收到的日志持久化，并且会发当前Request放入到pendingTxns队列中
             fzk.logRequest(hdr, txn, digest);
+
             if (hdr != null) {
                 /*
                  * Request header is created only by the leader, so this is only set
@@ -209,7 +224,10 @@ public class Follower extends Learner {
             break;
         case Leader.COMMIT:
             ServerMetrics.getMetrics().LEARNER_COMMIT_RECEIVED_COUNT.add(1);
+
+            // 二阶段提交中的提交，会从pendingTxns队列中获取request进行提交
             fzk.commit(qp.getZxid());
+
             if (om != null) {
                 final long startTime = Time.currentElapsedTime();
                 om.proposalCommitted(qp.getZxid());

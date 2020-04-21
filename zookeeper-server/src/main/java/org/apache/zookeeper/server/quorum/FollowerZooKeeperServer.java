@@ -83,6 +83,7 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
         Request request = new Request(hdr.getClientId(), hdr.getCxid(), hdr.getType(), hdr, txn, hdr.getZxid());
         request.setTxnDigest(digest);
         if ((request.zxid & 0xffffffffL) != 0) {
+            // 把当前请求放入pendingTxns队列中
             pendingTxns.add(request);
         }
         syncProcessor.processRequest(request);

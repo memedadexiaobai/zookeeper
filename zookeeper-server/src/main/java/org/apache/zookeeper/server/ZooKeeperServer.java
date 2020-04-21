@@ -1657,7 +1657,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     si.setLargeRequestSize(length);
                 }
                 si.setOwner(ServerCnxn.me);
-                //
+
+                // 使用requestThrottler来处理请求，requestThrottler表示限流
                 submitRequest(si);
             }
         }
@@ -1792,7 +1793,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
 
             // do not add non quorum packets to the queue.
-            // 如果是事务请求
+            // 如果是事务请求,这个请求需要被同步到其他服务器上去
+
+            // Leader节点中会记录一段最近已经被提交了的请求日志，并把该请求封装为Proposal添加到committedLog队列中
+            // 并记录两个属性当前committedLog队列中最大和最小的zxid
+            // 这个队列是用来：当某一个Learner节点需要和Leader节点同步数据时，
             if (quorumRequest) {
                 getZKDatabase().addCommittedProposal(request);
             }

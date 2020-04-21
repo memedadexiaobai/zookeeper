@@ -432,6 +432,8 @@ public class Leader extends LearnerMaster {
     // VisibleForTesting
     protected final Proposal newLeaderProposal = new Proposal();
 
+    // 这个线程会不断的阻塞的去接收learner发过来的socket连接，
+    // 只要leader不shutdown，它就不会停止，因为要等待新的learner节点连接
     class LearnerCnxAcceptor extends ZooKeeperCriticalThread {
 
         private final AtomicBoolean stop = new AtomicBoolean(false);
@@ -457,6 +459,7 @@ public class Leader extends LearnerMaster {
                         executor.submit(new LearnerCnxAcceptorHandler(serverSocket, latch)));
 
                 try {
+                    // 只有leader自己shutdown了，LearnerCnxAcceptorHandler中才会对latch减，这里才会解阻塞
                     latch.await();
                 } catch (InterruptedException ie) {
                     LOG.error("Interrupted while sleeping in LearnerCnxAcceptor.", ie);
@@ -479,6 +482,7 @@ public class Leader extends LearnerMaster {
             closeSockets();
         }
 
+
         class LearnerCnxAcceptorHandler implements Runnable {
             private ServerSocket serverSocket;
             private CountDownLatch latch;
@@ -494,7 +498,7 @@ public class Leader extends LearnerMaster {
                     Thread.currentThread().setName("LearnerCnxAcceptorHandler-" + serverSocket.getLocalSocketAddress());
 
                     while (!stop.get()) {
-                        // 接收learner节点发过来的socket连接
+                        // 接收learner节点发过来的socket连接，每接收到一个socket连接就开启一个LearnerHandler线程
                         acceptConnections();
                     }
                 } catch (Exception e) {
@@ -592,27 +596,35 @@ public class Leader extends LearnerMaster {
         zk.registerJMX(new LeaderBean(this, zk), self.jmxLocalPeerBean);
 
         try {
+            // 当前leader处于发现阶段
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             self.tick.set(0);
             zk.loadData();
 
+            // leader节点此时的信息，currentEpoch中的值，datatree上最近一次的zxid
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
-            //
+
             // Start thread that waits for connection requests from
             // new followers.
+            // 这个线程会不断的阻塞的去接收learner发过来的socket连接，
+            // 只要leader不shutdown，它就不会停止，因为要等待新的learner节点连接
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
 
+            // leader节点等待epoch统一，这个过程会阻塞
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
 
+            // 当走到这里，表示集群中大部分机器的epoch已经一样了，则这是本届的起始zxid
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
 
             synchronized (this) {
                 lastProposed = zk.getZxid();
             }
 
+            // 当epoch确定好了后，就可以告诉其他服务器：我是新leader，本届epoch是...
             // 领导者选举后成为了leader，向其他服务器发送一个NEWLEADER Packet
+            // zk.getZxid()中拥有本届epoch
             newLeaderProposal.packet = new QuorumPacket(NEWLEADER, zk.getZxid(), null, null);
 
             if ((newLeaderProposal.packet.getZxid() & 0xffffffffL) != 0) {
@@ -660,13 +672,21 @@ public class Leader extends LearnerMaster {
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
 
+            // 等待刚刚协商出来的epoch，被超过一半的节点回复了ack
+            // 因为在上面只是leader接收到了超过一半节点的epoch，最终选择出来了一个epoch
+            // 但是这个epoch还没有被超过一半的节点得到确认
+            // 这个过程也会阻塞
             waitForEpochAck(self.getId(), leaderStateSummary);
+
+            // 只要超过一半的节点都确认了epoch，那么这个epoch就是最终的epoch，设置到currentEpoch文件中
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
+
+            // 当前leader处于同步数据节点
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
-                // 当前leader给自己一个ack
+                // 阻塞等待超过一半的节点和leader节点完成了数据同步，并发送一个ack
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -692,6 +712,8 @@ public class Leader extends LearnerMaster {
                 return;
             }
 
+            // Leader和其他节点完成了数据同步后，就要初始化服务器了，要准备接收客户端请求了
+            // 这里会启动ReqeustProcessor线程，然后就可以处理客户端请求了
             startZkServer();
 
             /**
@@ -732,6 +754,8 @@ public class Leader extends LearnerMaster {
             // If not null then shutdown this leader
             String shutdownMessage = null;
 
+            // Leader主线程阻塞在这里
+            //
             while (true) {
                 synchronized (this) {
                     long start = Time.currentElapsedTime();
@@ -1417,26 +1441,34 @@ public class Leader extends LearnerMaster {
     }
 
     @Override
+    // 拿某一个lastAcceptedEpoch来和leader的epoch来进行pk
+    // lastAcceptedEpoch可以是follower节点传过来的epoch
     public long getEpochToPropose(long sid, long lastAcceptedEpoch) throws InterruptedException, IOException {
         synchronized (connectingFollowers) {
             if (!waitingForNewEpoch) {
                 return epoch;
             }
 
-            // 如果follower的epoch大于或等于leader的epoch
-            // 则leader节点在follower的epoch基础上加+1
+            // 如果接收的epoch大于或等于leader目前的epoch，则epoch为lastAcceptedEpoch+1,
+            // 表示leader新开一届来进行领导
             if (lastAcceptedEpoch >= epoch) {
                 epoch = lastAcceptedEpoch + 1;
             }
+
+            // 如果sid是参与者（leader或follower）
             if (isParticipant(sid)) {
                 connectingFollowers.add(sid);
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+
+            // connectingFollowers表示参与者，只要超过一半的参与者进行了epoch的协商，就确定了新epoch了
             if (connectingFollowers.contains(self.getId()) && verifier.containsQuorum(connectingFollowers)) {
                 waitingForNewEpoch = false;
+                // 设置leader的acceptedEpoch，写入文件，表示本届领导的epoch
                 self.setAcceptedEpoch(epoch);
                 connectingFollowers.notifyAll();
             } else {
+                // 如果没有过半，则调用当前方法的线程阻塞（需要等超过一半的机器都统一了epoch就会notifyAll，代码就在上面）
                 long start = Time.currentElapsedTime();
                 if (sid == self.getId()) {
                     timeStartWaitForEpoch = start;
@@ -1465,6 +1497,7 @@ public class Leader extends LearnerMaster {
     // VisibleForTesting
     protected boolean electionFinished = false;
 
+    // 等待
     @Override
     public void waitForEpochAck(long id, StateSummary ss) throws IOException, InterruptedException {
         synchronized (electingFollowers) {

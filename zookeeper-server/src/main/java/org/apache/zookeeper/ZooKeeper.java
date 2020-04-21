@@ -279,9 +279,11 @@ public class ZooKeeper implements AutoCloseable {
      */
     static class ZKWatchManager implements ClientWatchManager {
 
+        // 以下三个是一次性的
         private final Map<String, Set<Watcher>> dataWatches = new HashMap<String, Set<Watcher>>();
         private final Map<String, Set<Watcher>> existWatches = new HashMap<String, Set<Watcher>>();
         private final Map<String, Set<Watcher>> childWatches = new HashMap<String, Set<Watcher>>();
+        // 以下两个是一直有效的
         private final Map<String, Set<Watcher>> persistentWatches = new HashMap<String, Set<Watcher>>();
         private final Map<String, Set<Watcher>> persistentRecursiveWatches = new HashMap<String, Set<Watcher>>();
         private boolean disableAutoWatchReset;
@@ -704,6 +706,7 @@ public class ZooKeeper implements AutoCloseable {
 
         @Override
         protected Map<String, Set<Watcher>> getWatches(int rc) {
+            // rc == 0表示请求没有错误，注册的是dataWatches, 如果rc
             return rc == 0 ? watchManager.dataWatches : watchManager.existWatches;
         }
 
@@ -3212,7 +3215,6 @@ public class ZooKeeper implements AutoCloseable {
      */
     public void addWatch(String basePath, Watcher watcher, AddWatchMode mode)
             throws KeeperException, InterruptedException {
-
 
         PathUtils.validatePath(basePath);
         String serverPath = prependChroot(basePath);

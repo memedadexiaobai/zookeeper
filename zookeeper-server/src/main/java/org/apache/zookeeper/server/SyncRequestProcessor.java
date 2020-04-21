@@ -195,7 +195,6 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // append只是把request添加到stream中
                 // 只有当Request中的hdr为null时才返回false
                 if (zks.getZKDatabase().append(si)) {
-                    System.out.println("append..");
 
                     // 是否应该打快照了
                     if (shouldSnapshot()) {
@@ -243,7 +242,6 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // 判断是否可以Flush了
                 // 当累积了maxBatchSize个请求，或者达到某个定时点了就进行持久化
                 if (shouldFlush()) {
-                    System.out.println("ready flush..");
                     flush();
                 }
 
@@ -260,7 +258,6 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
             return;
         }
 
-        System.out.println("realy flush..");
 
         ServerMetrics.getMetrics().BATCH_SIZE.add(toFlush.size());
 

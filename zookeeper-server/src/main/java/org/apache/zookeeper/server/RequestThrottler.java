@@ -155,9 +155,11 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                             request = null;
                             break;
                         }
+                        // 真正被处理的请求
                         if (zks.getInProcess() < maxRequests) {
                             break;
                         }
+                        // 超过了则睡眠一会
                         throttleSleep(stallTime);
                     }
                 }
@@ -167,6 +169,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 }
 
                 // A dropped stale request will be null
+                // 进行处理
                 if (request != null) {
                     if (request.isStale()) {
                         ServerMetrics.getMetrics().STALE_REQUESTS.add(1);

@@ -331,6 +331,7 @@ public class NIOServerCnxn extends ServerCnxn {
             if (k.isReadable()) {
                 // 读就绪，把数据读到incomingBuffer中，
                 int rc = sock.read(incomingBuffer); // 一开始读4个字节数据，也就是读数据包的长度
+
                 if (rc < 0) {
                     // 没有读到数据则报错
                     handleFailedRead();

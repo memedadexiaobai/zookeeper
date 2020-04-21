@@ -128,6 +128,7 @@ public class WatchManager implements IWatchManager {
 
         Set<Watcher> watchers = new HashSet<>();
 
+        // 拿到当前path的各层父path进行递归
         PathParentIterator pathParentIterator = getPathParentIterator(path);
         synchronized (this) {
             for (String localPath : pathParentIterator.asIterable()) {
@@ -138,10 +139,14 @@ public class WatchManager implements IWatchManager {
                     continue;
                 }
                 Iterator<Watcher> iterator = thisWatchers.iterator();
+                // 遍历当前path上注册的Watcher
                 while (iterator.hasNext()) {
                     Watcher watcher = iterator.next();
                     WatcherMode watcherMode = watcherModeManager.getWatcherMode(watcher, localPath);
+                    // 如果Watcher是递归的
                     if (watcherMode.isRecursive()) {
+                        // 当前触发的世界不是NodeChildrenChanged就能触发递归Watcher
+                        // 那么也就是说，一个节点的孩子节点被删除了，是不会触发递归Watcher的
                         if (type != EventType.NodeChildrenChanged) {
                             watchers.add(watcher);
                         }
@@ -174,6 +179,7 @@ public class WatchManager implements IWatchManager {
             if (supress != null && supress.contains(w)) {
                 continue;
             }
+            // 执行Watcher，向客户端发送事件
             w.process(e);
         }
 

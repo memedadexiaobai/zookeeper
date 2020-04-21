@@ -124,8 +124,8 @@ public class WorkerService {
                 // make sure to map negative ids as well to [0, size-1]
                 // id可以是sessionId，表示一个session中的命令固定交给一个线程执行
 
-                // 单机模式下，workers中只有一个线程池，这个线程池有多个线程
-                // 集群模式下，workers中有多个线程池，每个线程池中只有一个线程
+                // 单机模式下，workers中只有一个线程池，这个线程池有多个线程，所以传进来的id固定为0
+                // 集群模式下，workers中有多个线程池，每个线程池中只有一个线程，用哪个线程由sessionId来决定
 
                 // 所以单机模式下，服务端在处理命令时，这些命令会并发的交给线程来处理
                 int workerNum = ((int) (id % size) + size) % size;
@@ -158,7 +158,7 @@ public class WorkerService {
                     workRequest.cleanup();
                     return;
                 }
-                //
+
                 workRequest.doWork();
             } catch (Exception e) {
                 LOG.warn("Unexpected exception", e);

@@ -475,6 +475,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
             // Stop selecting this key while processing on its
             // connection
+            // 处理完一个key才去处理下一个key
             cnxn.disableSelectable();
             key.interestOps(0);
 
@@ -555,6 +556,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             if (key.isReadable() || key.isWritable()) {
 
                 // 处理key
+                // 到这里，多个客户端请求还是并发处理的
                 cnxn.doIO(key);
 
                 // Check if we shutdown or doIO() closed this connection
