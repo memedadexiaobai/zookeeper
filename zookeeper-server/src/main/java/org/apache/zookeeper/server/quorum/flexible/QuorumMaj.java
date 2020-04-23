@@ -115,6 +115,7 @@ public class QuorumMaj implements QuorumVerifier {
     public String toString() {
         StringBuilder sw = new StringBuilder();
 
+        // 所有程序，参与者与学习者都包括
         for (QuorumServer member : getAllMembers().values()) {
             String key = "server." + member.id;
             String value = member.toString();

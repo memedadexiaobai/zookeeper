@@ -227,8 +227,10 @@ public class QuorumPeerMain {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
 
+            // quorumPeer是一个线程
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
+
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok

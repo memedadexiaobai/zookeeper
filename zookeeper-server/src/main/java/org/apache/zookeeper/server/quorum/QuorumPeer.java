@@ -1082,6 +1082,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
         loadDataBase();
         startServerCnxnFactory();
+
         try {
             adminServer.start();
         } catch (AdminServerException e) {
@@ -1819,7 +1820,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     // qcm outside QV_LOCK to avoid a deadlock against other callers of qcm.connectOne().
     private void connectNewPeers(QuorumCnxManager qcm) {
         if (quorumVerifier != null && lastSeenQuorumVerifier != null) {
+            //
             Map<Long, QuorumServer> committedView = quorumVerifier.getAllMembers();
+
             for (Entry<Long, QuorumServer> e : lastSeenQuorumVerifier.getAllMembers().entrySet()) {
                 if (e.getKey() != getId() && !committedView.containsKey(e.getKey())) {
                     qcm.connectOne(e.getKey());
@@ -1858,6 +1861,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
                 if (writeToDisk) {
                     try {
+                        // 把当前qv中的所有成员写入到fileName的文件中
+
                         String fileName = getNextDynamicConfigFilename();
                         if (fileName != null) {
                             QuorumPeerConfig.writeDynamicConfig(fileName, qv, true);

@@ -573,7 +573,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     private void close(long sessionId) {
+        //
         Request si = new Request(null, sessionId, 0, OpCode.closeSession, null, null);
+        //
         submitRequest(si);
     }
 
@@ -604,6 +606,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             "Expiring session 0x{}, timeout of {}ms exceeded",
             Long.toHexString(sessionId),
             session.getTimeout());
+
         close(sessionId);
     }
 
@@ -660,17 +663,23 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     public synchronized void startup() {
+
+        // sessionTracker是一个线程，用来关闭过期session
         if (sessionTracker == null) {
             createSessionTracker();
         }
         startSessionTracker();
 
+        // 设置RequestProcessor chain
         setupRequestProcessors();
 
+        // RequestThrottler是一个线程，用来进行限流，并调用firstRequestProcessor来处理请求
         startRequestThrottler();
 
+        // jmx就不看了
         registerJMX();
 
+        // JvmPauseMonitor内部也是一个线程，用来监听Jvm是否STW了
         startJvmPauseMonitor();
 
         registerMetrics();
@@ -680,6 +689,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         requestPathMetricsCollector.start();
 
         localSessionEnabled = sessionTracker.isLocalSessionsEnabled();
+
         notifyAll();
     }
 

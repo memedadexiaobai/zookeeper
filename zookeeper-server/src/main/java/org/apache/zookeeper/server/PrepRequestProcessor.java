@@ -436,6 +436,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // standalone mode - reconfiguration currently not supported
                 throw new KeeperException.UnimplementedException();
             }
+
             QuorumVerifier lastSeenQV = lzks.self.getLastSeenQuorumVerifier();
             // check that there's no reconfig in progress
             if (lastSeenQV.getVersion() != lzks.self.getQuorumVerifier().getVersion()) {

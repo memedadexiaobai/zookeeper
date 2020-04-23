@@ -198,6 +198,7 @@ public class QuorumPeerConfig {
             throw new ConfigException("Error processing " + path, e);
         }
 
+        // 这里会去生成
         if (dynamicConfigFileStr != null) {
             try {
                 Properties dynamicCfg = new Properties();
@@ -224,6 +225,7 @@ public class QuorumPeerConfig {
             } catch (IllegalArgumentException e) {
                 throw new ConfigException("Error processing " + dynamicConfigFileStr, e);
             }
+
             File nextDynamicConfigFile = new File(configFileStr + nextDynamicConfigFileSuffix);
             if (nextDynamicConfigFile.exists()) {
                 try {
@@ -508,6 +510,8 @@ public class QuorumPeerConfig {
         // static configuration params see writeDynamicConfig()
         if (dynamicConfigFileStr == null) {
             setupQuorumPeerConfig(zkProp, true);
+
+            // reconfigEnabled开启了，所以把现在的配置先备份一下，因为后面可能会动态修改
             if (isDistributed() && isReconfigEnabled()) {
                 // we don't backup static config for standalone mode.
                 // we also don't backup if reconfig feature is disabled.
@@ -930,6 +934,7 @@ public class QuorumPeerConfig {
     }
 
     public boolean isDistributed() {
+        // standaloneEnabled=false，表示集群模式 或 参与者大于1
         return quorumVerifier != null && (!standaloneEnabled || quorumVerifier.getVotingMembers().size() > 1);
     }
 

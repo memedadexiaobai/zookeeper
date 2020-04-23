@@ -607,7 +607,7 @@ public class Leader extends LearnerMaster {
 
             // Start thread that waits for connection requests from
             // new followers.
-            // 这个线程会不断的阻塞的去接收learner发过来的socket连接，
+            // 单独开启一个线程去接收learner发过来的socket连接，
             // 只要leader不shutdown，它就不会停止，因为要等待新的learner节点连接
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
@@ -633,6 +633,7 @@ public class Leader extends LearnerMaster {
 
             QuorumVerifier lastSeenQV = self.getLastSeenQuorumVerifier();
             QuorumVerifier curQV = self.getQuorumVerifier();
+
             if (curQV.getVersion() == 0 && curQV.getVersion() == lastSeenQV.getVersion()) {
                 // This was added in ZOOKEEPER-1783. The initial config has version 0 (not explicitly
                 // specified by the user; the lack of version in a config file is interpreted as version=0).
@@ -654,8 +655,10 @@ public class Leader extends LearnerMaster {
                 // hence before they construct the NEWLEADER message containing
                 // the last-seen-quorumverifier of the leader, which we change below
                 try {
+
                     QuorumVerifier newQV = self.configFromString(curQV.toString());
                     newQV.setVersion(zk.getZxid());
+
                     self.setLastSeenQuorumVerifier(newQV, true);
                 } catch (Exception e) {
                     throw new IOException(e);

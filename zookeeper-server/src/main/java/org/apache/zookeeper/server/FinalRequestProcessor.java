@@ -120,7 +120,7 @@ public class FinalRequestProcessor implements RequestProcessor {
 
         // 1. 会更新ZKDatabase
         // 2. 触发watch
-        // 3. 如果是集群模式就是发起提议
+        // 3. 如果是集群模式就把request添加到committedLog队列中
         ProcessTxnResult rc = zks.processTxn(request);
 
         // ZOOKEEPER-558:

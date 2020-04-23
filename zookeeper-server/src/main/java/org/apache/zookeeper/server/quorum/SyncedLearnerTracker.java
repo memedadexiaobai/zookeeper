@@ -51,6 +51,7 @@ public class SyncedLearnerTracker {
     }
 
     public boolean hasAllQuorums() {
+        // 当有多个QuorumVerifier时，每个QuorumVerifier都得符合过半机制
         for (QuorumVerifierAcksetPair qvAckset : qvAcksetPairs) {
             if (!qvAckset.getQuorumVerifier().containsQuorum(qvAckset.getAckset())) {
                 return false;

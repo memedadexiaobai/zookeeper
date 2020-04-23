@@ -17,19 +17,20 @@ public class ZookeeperTest {
             }
         });
 
-//        zooKeeper.getData("/luban", new Watcher() {
-//            @Override
-//            public void process(WatchedEvent event) {
-//                System.out.println(event.getType());
-//            }
-//        }, new Stat());
-//
-//        zooKeeper.getChildren("/luban", new Watcher() {
-//            @Override
-//            public void process(WatchedEvent event) {
-//                System.out.println(event.getType());
-//            }
-//        });
+        zooKeeper.getData("/luban", new Watcher() {
+            @Override
+            public void process(WatchedEvent event) {
+                System.out.println(event.getType());
+            }
+        }, new Stat());
+
+        zooKeeper.getData("/xx", new Watcher() {
+            @Override
+            public void process(WatchedEvent event) {
+                System.out.println(event.getType());
+            }
+        }, new Stat());
+
 
 //        zooKeeper.exists("/luban", new Watcher() {
 //            @Override
@@ -38,21 +39,7 @@ public class ZookeeperTest {
 //            }
 //        });
 
-        zooKeeper.setData("/luban", "123".getBytes(), 0, new AsyncCallback.StatCallback() {
-            @Override
-            public void processResult(int rc, String path, Object ctx, Stat stat) {
-                System.out.println(1);
-            }
-        },null);
 
-        System.out.println("xx");
-
-        zooKeeper.getData("/luban", false, new AsyncCallback.DataCallback() {
-            @Override
-            public void processResult(int rc, String path, Object ctx, byte[] data, Stat stat) {
-                System.out.println(2);
-            }
-        },null);
 
 
 

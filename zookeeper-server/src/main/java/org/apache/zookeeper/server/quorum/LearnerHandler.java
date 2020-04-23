@@ -653,7 +653,7 @@ public class LearnerHandler extends ZooKeeperThread {
 
             LOG.debug("Received NEWLEADER-ACK message from {}", sid);
 
-            // 当前learner已经同步完数据了，阻塞等待对应learner发过来的ACK请求，已经等待其他learner完成数据同步过程并发送ACK请求
+            // 当前learner已经同步完数据了，阻塞等待对应learner发过来的ACK请求
             // 这里会阻塞
             learnerMaster.waitForNewLeaderAck(getSid(), qp.getZxid());
 

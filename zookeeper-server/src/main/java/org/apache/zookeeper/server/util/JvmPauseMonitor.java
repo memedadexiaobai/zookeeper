@@ -144,6 +144,7 @@ public class JvmPauseMonitor {
 
     private Map<String, GcTimes> getGcTimes() {
         Map<String, GcTimes> map = new HashMap<>();
+        //
         List<GarbageCollectorMXBean> gcBeans = ManagementFactory.getGarbageCollectorMXBeans();
         for (GarbageCollectorMXBean gcBean : gcBeans) {
             map.put(gcBean.getName(), new GcTimes(gcBean));
@@ -176,6 +177,8 @@ public class JvmPauseMonitor {
 
     }
 
+
+
     private class JVMMonitor implements Runnable {
 
         @Override
@@ -193,9 +196,13 @@ public class JvmPauseMonitor {
                 long extraSleepTime = (endTime - startTime) - sleepTimeMs;
                 Map<String, GcTimes> gcTimesAfterSleep = getGcTimes();
 
+                // 如果extraSleepTime大于0，表示线程有一段时间没有执行，为什么会没有执行？JVM可能在进行fullgc
+
+                // 警告时间
                 if (extraSleepTime > warnThresholdMs) {
                     ++numGcWarnThresholdExceeded;
                     LOG.warn(formatMessage(extraSleepTime, gcTimesAfterSleep, gcTimesBeforeSleep));
+                    // info时间
                 } else if (extraSleepTime > infoThresholdMs) {
                     ++numGcInfoThresholdExceeded;
                     LOG.info(formatMessage(extraSleepTime, gcTimesAfterSleep, gcTimesBeforeSleep));

@@ -158,9 +158,11 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                     continue;
                 }
 
+                // 拿到过期的session集合
                 for (SessionImpl s : sessionExpiryQueue.poll()) {
                     ServerMetrics.getMetrics().STALE_SESSIONS_EXPIRED.add(1);
                     setSessionClosing(s.sessionId);
+                    // 关闭session
                     expirer.expire(s);
                 }
             }
