@@ -430,12 +430,6 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 Set<SelectionKey> selected = selector.selectedKeys();
                 ArrayList<SelectionKey> selectedList = new ArrayList<SelectionKey>(selected);
 
-//                try {
-//                    Thread.sleep(10*1000);
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                }
-
                 // 这里会打乱就绪事件，所以事件的顺序是乱的
                 Collections.shuffle(selectedList);
 
@@ -808,6 +802,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
         if (startServer) {
             // 初始化ZKDatabase，加载数据
+            // 这里还会把之前的session给加载出来，放入到sessionsWithTimeouts中
             zks.startdata();
 
             // 1. 创建sessionTracker

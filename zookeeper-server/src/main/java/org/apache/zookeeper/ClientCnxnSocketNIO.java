@@ -72,6 +72,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         if (sockKey.isReadable()) {
             // 把socket中的数据读入到incomingBuffer中
             // 一开始只读了前4个字节的数据（lenBuffer）
+            //
             int rc = sock.read(incomingBuffer);
 
             if (rc < 0) {
@@ -285,6 +286,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
     void registerAndConnect(SocketChannel sock, InetSocketAddress addr) throws IOException {
         // 注册一个CONNECT事件
         sockKey = sock.register(selector, SelectionKey.OP_CONNECT);
+        // 尝试去连接一下
         boolean immediateConnect = sock.connect(addr);
         if (immediateConnect) {
             sendThread.primeConnection();
@@ -368,9 +370,14 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         // Everything below and until we get back to the select is
         // non blocking, so time is effectively a constant. That is
         // Why we just have to do this once, here
+
+        //
         updateNow();
+
         for (SelectionKey k : selected) {
             SocketChannel sc = ((SocketChannel) k.channel());
+
+            // 可以连接的就绪事件
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
                 if (sc.finishConnect()) {
                     // socket连接成功后，进行一些连接初始化
@@ -388,6 +395,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                 doIO(pendingQueue, cnxn);
             }
         }
+
         // 连接中
         if (sendThread.getZkState().isConnected()) {
             // 根据outgoingQueue来查找是否存在可以发送的数据包

@@ -43,7 +43,7 @@ public class ExpiryQueue<E> {
     private final ConcurrentHashMap<Long, Set<E>> expiryMap = new ConcurrentHashMap<Long, Set<E>>();
 
     private final AtomicLong nextExpirationTime = new AtomicLong();
-    private final int expirationInterval;
+    private final int expirationInterval; // 就是tickTime
 
     public ExpiryQueue(int expirationInterval) {
         this.expirationInterval = expirationInterval;
@@ -82,15 +82,21 @@ public class ExpiryQueue<E> {
      *                 changed, or null if unchanged
      */
     public Long update(E elem, int timeout) {
+        // elemMap中保存的是某一个session的过期截止时间
         Long prevExpiryTime = elemMap.get(elem);
         long now = Time.currentElapsedTime();
+
+        // 基于当前时间和设置的超时时间，以及ticktime ,计算出下一个过期时间
+        // 比如当前时间 20s.111毫秒   timeout是10秒，那么过期时间不是30s.111毫秒，而是32s
         Long newExpiryTime = roundToNextInterval(now + timeout);
 
+        // 如果过期时间没有变化，则不用更新
         if (newExpiryTime.equals(prevExpiryTime)) {
             // No change, so nothing to update
             return null;
         }
 
+        // expiryMap中保存的是某个过期时间对于的session
         // First add the elem to the new expiry time bucket in expiryMap.
         Set<E> set = expiryMap.get(newExpiryTime);
         if (set == null) {
@@ -122,6 +128,7 @@ public class ExpiryQueue<E> {
      */
     public long getWaitTime() {
         long now = Time.currentElapsedTime();
+        // 下个过期时间
         long expirationTime = nextExpirationTime.get();
         return now < expirationTime ? (expirationTime - now) : 0L;
     }
@@ -142,8 +149,12 @@ public class ExpiryQueue<E> {
         }
 
         Set<E> set = null;
-        long newExpirationTime = expirationTime + expirationInterval;
+
+        long newExpirationTime = expirationTime + expirationInterval; // expirationInterval就是tickTime
+
+        // 先设置下一个过期时间
         if (nextExpirationTime.compareAndSet(expirationTime, newExpirationTime)) {
+            // 把处于当前已经过期的session移除出来
             set = expiryMap.remove(expirationTime);
         }
         if (set == null) {

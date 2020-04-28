@@ -658,6 +658,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             zkDb = new ZKDatabase(this.txnLogFactory);
         }
         if (!zkDb.isInitialized()) {
+            // 加载数据
             loadData();
         }
     }
@@ -968,6 +969,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         ByteBuffer to = ByteBuffer.allocate(4);
         to.putInt(timeout);
         cnxn.setSessionId(sessionId);
+
         Request si = new Request(cnxn, sessionId, 0, OpCode.createSession, to, null);
         submitRequest(si);
         return sessionId;
@@ -1129,6 +1131,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             }
         }
         try {
+            // 这里会更新session的过期时间
             touch(si.cnxn);
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
@@ -1657,7 +1660,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                 cnxn.disableRecv();
             } else {
 
-                //
+                // 主逻辑
+
                 Request si = new Request(cnxn, cnxn.getSessionId(), h.getXid(), h.getType(), incomingBuffer, cnxn.getAuthInfo());
                 int length = incomingBuffer.limit();
                 // 是不是大请求

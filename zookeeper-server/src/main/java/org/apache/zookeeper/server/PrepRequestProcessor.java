@@ -1089,13 +1089,14 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
     public void processRequest(Request request) {
         request.prepQueueStartTime = Time.currentElapsedTime();
 
-        if (request.type == OpCode.create || request.type == OpCode.getData) {
-            try {
-                Thread.sleep(5000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
+        // 这里可以用来测试，多个客户端并发请求时可能会出现的异常情况
+//        if (request.type == OpCode.create || request.type == OpCode.getData) {
+//            try {
+//                Thread.sleep(5000);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//        }
 
         submittedRequests.add(request);
         ServerMetrics.getMetrics().PREP_PROCESSOR_QUEUED.add(1);

@@ -1048,7 +1048,7 @@ public class ZooKeeper implements AutoCloseable {
             sessionTimeout,
             this,
             watchManager,
-            // 使用什么技术去建立socket连接,nio还是netty,默认是nio
+            // 使用什么技术去建立socket连接,nio还是netty,默认是nio，这里不会去建立socket连接，只是拿到一个ClientCnxnSocket对象
             getClientCnxnSocket(),
             canBeReadOnly);
         cnxn.start();

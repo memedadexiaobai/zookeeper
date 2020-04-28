@@ -1234,6 +1234,7 @@ public class ClientCnxn {
                         // 简历连接，包括两步
                         // 1. 简历socket连接
                         // 2. 连接初始化，primeConnection()
+                        // 3. 这里没有发送任何数据，只是可能把socket连接建立好了
                         startConnect(serverAddress);
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
@@ -1274,14 +1275,14 @@ public class ClientCnxn {
                             }
                         }
 
-                        // 没看的很明白，大概知道意思
-                        // 连接成功后，是否超过readTimeout，比如客户端
+                        // socket连接成功后，就查看是否超过readTimeout时间了，还没有从服务端读到数据（ping请求的响应）
                         to = readTimeout - clientCnxnSocket.getIdleRecv();
                     } else {
-                        // 没有连接成功，是否超过connectTimeout
+                        // 超过connectTimeout时间了，socket连接还没有建立成功
                         to = connectTimeout - clientCnxnSocket.getIdleRecv();
                     }
 
+                    // session过期了
                     if (to <= 0) {
                         String warnInfo = String.format(
                             "Client session timed out, have not heard from server in %dms for session id 0x%s",
@@ -1295,10 +1296,13 @@ public class ClientCnxn {
                     if (state.isConnected()) {
                         //1000(1 second) is to prevent race condition missing to send the second ping
                         //also make sure not to send too many pings when readTimeout is small
+
+                        // clientCnxnSocket.getIdleSend()表示上一次发送数据的时间
                         int timeToNextPing = readTimeout / 2
                                              - clientCnxnSocket.getIdleSend()
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
+                        // 10秒一定会发送一个ping
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
                             // 客户端向服务端发送心跳
                             sendPing();
@@ -1324,6 +1328,7 @@ public class ClientCnxn {
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
 
+                    // 查询就绪事件
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {
@@ -1348,7 +1353,6 @@ public class ClientCnxn {
                 }
             }
 
-            // 如果
             synchronized (state) {
                 // When it comes to this point, it guarantees that later queued
                 // packet to outgoingQueue will be notified of death.
@@ -1545,6 +1549,7 @@ public class ClientCnxn {
 
         sendThread.close();
         try {
+            // 等sendThread线程执行完了之后，当前线程才继续往下执行
             sendThread.join();
         } catch (InterruptedException ex) {
             LOG.warn("Got interrupted while waiting for the sender thread to close", ex);

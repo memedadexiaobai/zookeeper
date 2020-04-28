@@ -174,6 +174,7 @@ public class ContainerManager {
                     container just before a container cleaning period the container
                     would be immediately be deleted.
                  */
+                // 对于容器节点，只有创建过孩子节点才能被删除
                 if (node.stat.getCversion() > 0) {
                     candidates.add(containerPath);
                 } else {

@@ -84,9 +84,12 @@ public class FileSnap implements SnapShot {
             snap = snapList.get(i);
             LOG.info("Reading snapshot {}", snap);
             snapZxid = Util.getZxidFromName(snap.getName(), SNAPSHOT_FILE_PREFIX);
+
             try (CheckedInputStream snapIS = SnapStream.getInputStream(snap)) {
                 InputArchive ia = BinaryInputArchive.getArchive(snapIS);
+
                 deserialize(dt, sessions, ia);
+
                 SnapStream.checkSealIntegrity(snapIS, ia);
 
                 // Digest feature was added after the CRC to make it backward

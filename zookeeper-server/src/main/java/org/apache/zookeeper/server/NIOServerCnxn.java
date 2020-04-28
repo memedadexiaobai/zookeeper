@@ -557,6 +557,7 @@ public class NIOServerCnxn extends ServerCnxn {
         if (!initialized && checkFourLetterWord(sk, len)) {
             return false;
         }
+        // maxBuffer是1M,
         if (len < 0 || len > BinaryInputArchive.maxBuffer) {
             throw new IOException("Len error " + len);
         }
