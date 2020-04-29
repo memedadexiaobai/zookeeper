@@ -142,7 +142,7 @@ public class ZooKeeperServerMain {
             // 日志目录、数据目录
             txnLog = new FileTxnSnapLog(config.dataLogDir, config.dataDir);
 
-            // 暂时没有研究
+            //
             JvmPauseMonitor jvmPauseMonitor = null;
             if (config.jvmPauseMonitorToRun) {
                 jvmPauseMonitor = new JvmPauseMonitor(config);
@@ -165,7 +165,7 @@ public class ZooKeeperServerMain {
             boolean needStartZKServer = true;
             if (config.getClientPortAddress() != null) {
                 // 默认拿到NIOServerCnxnFactory
-                cnxnFactory = ServerCnxnFactory.createFactory();
+                cnxnFactory = ServerCnxnFactory.createFactory(); // NIOServerCnxnFactory
                 // ServerSocketChannel bind地址和端口 ,设置最大客户端连接限制数
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
                 // 启动

@@ -567,7 +567,7 @@ public class DataTree {
         }
         updateWriteStat(path, bytes);
 
-        // 触发watch,
+        // 触发watch, dataWatches和childWatches不要和客户端里的一样理解，这两个相当于两个工具类，都是WatchManager类的实例
         dataWatches.triggerWatch(path, Event.EventType.NodeCreated);
         childWatches.triggerWatch(parentName.equals("") ? "/" : parentName, Event.EventType.NodeChildrenChanged);
     }
@@ -732,6 +732,7 @@ public class DataTree {
             throw new KeeperException.NoNodeException();
         }
 
+        // path : Set<Watcher>
         synchronized (n) {
             n.copyStat(stat);
             if (watcher != null) {

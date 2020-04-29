@@ -54,8 +54,7 @@ public enum AddWatchMode {
      * </p>
      */
     // 递归，子节点的数据变化也会触发Watcher，而且子节点的子节点数据发生变化也会触发监听器
-    PERSISTENT_RECURSIVE(ZooDefs.AddWatchModes.persistentRecursive)
-    ;
+    PERSISTENT_RECURSIVE(ZooDefs.AddWatchModes.persistentRecursive);
 
     public int getMode() {
         return mode;

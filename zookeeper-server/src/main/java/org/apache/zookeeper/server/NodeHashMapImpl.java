@@ -30,6 +30,7 @@ import org.apache.zookeeper.server.util.AdHash;
  */
 public class NodeHashMapImpl implements NodeHashMap {
 
+    // /luban  -
     private final ConcurrentHashMap<String, DataNode> nodes;
     private final boolean digestEnabled;
     private final DigestCalculator digestCalculator;

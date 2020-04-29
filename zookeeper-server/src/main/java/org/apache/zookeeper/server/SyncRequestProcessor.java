@@ -145,7 +145,6 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private boolean shouldSnapshot() {
-        // 当前的
         int logCount = zks.getZKDatabase().getTxnCount();
         long logSize = zks.getZKDatabase().getTxnSize();
         return (logCount > (snapCount / 2 + randRoll))
@@ -173,13 +172,15 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 long pollTime = Math.min(zks.getMaxWriteQueuePollTime(), getRemainingDelay());
 
-                // poll会阻塞，直到有数据返回
+                // poll
+                // 移除并返回队列头部的元素，如果队列为空，则返回null
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
 
                 if (si == null) {
                     // 如果从queuedRequests队列中没有获取到请求了，那么就把直接接收到的请求flush
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
                     flush();
+                    // 移除并返回队列头部的元素，如果队列为空，则阻塞
                     si = queuedRequests.take();
                 }
 
@@ -264,6 +265,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         long flushStartTime = Time.currentElapsedTime();
         // flush logStream，真正进行持久化
         zks.getZKDatabase().commit();
+
         ServerMetrics.getMetrics().SYNC_PROCESSOR_FLUSH_TIME.add(Time.currentElapsedTime() - flushStartTime);
 
         if (this.nextProcessor == null) {

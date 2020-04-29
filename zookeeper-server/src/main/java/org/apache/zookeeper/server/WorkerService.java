@@ -114,6 +114,7 @@ public class WorkerService {
         }
 
         // 这是一个线程，它内部就会负责处理客户端请求
+        // IOWorkRequest
         ScheduledWorkRequest scheduledWorkRequest = new ScheduledWorkRequest(workRequest);
 
         // If we have a worker thread pool, use that; otherwise, do the work

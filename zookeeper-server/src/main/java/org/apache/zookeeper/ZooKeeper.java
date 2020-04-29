@@ -651,6 +651,7 @@ public class ZooKeeper implements AutoCloseable {
      * Register a watcher for a particular path.
      */
     public abstract class WatchRegistration {
+        // Watch注册对象，对于的path以及Watcher
 
         private Watcher watcher;
         private String clientPath;
@@ -671,6 +672,7 @@ public class ZooKeeper implements AutoCloseable {
             if (shouldAddWatch(rc)) {
 
                 // 当前WatcherRegistration是什么类型就进入对应的getWatchers方法中
+                // 把Watcher注册到ZKWatchManager中
                 Map<String, Set<Watcher>> watches = getWatches(rc);
                 synchronized (watches) {
                     // 把当前watcher添加到Set中，完成watcher的注册
@@ -3305,6 +3307,7 @@ public class ZooKeeper implements AutoCloseable {
         PathUtils.validatePath(path);
         final String clientPath = path;
         final String serverPath = prependChroot(clientPath);
+
         WatchDeregistration wcb = new WatchDeregistration(clientPath, watcher, watcherType, local, watchManager);
 
         RequestHeader h = new RequestHeader();

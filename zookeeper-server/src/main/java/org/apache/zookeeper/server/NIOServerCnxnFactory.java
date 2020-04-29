@@ -386,7 +386,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 while (!stopped) {
                     try {
                         // 查询就绪事件
-                        select();
+                        //
+                        select(); //
 
                         // 这个方法会对acceptedQueue队列中的sc向select上注册OP_READ事件
                         processAcceptedConnections();
@@ -446,7 +447,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
                     // 读就绪事件或写就绪事件
                     if (key.isReadable() || key.isWritable()) {
-                        // 处理
+                        // 处理客户端的命令、请求
                         handleIO(key);
                     } else {
                         LOG.warn("Unexpected ops in select {}", key.readyOps());
@@ -475,6 +476,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
             // 更新NIOServerCnxn上的时间，NIOServerCnxn也是一个对象，如果一直没有接收到数据（客户端一直没有发送数据和ping），
             // 就需要把这个对象删掉
+            // 续期
             touchCnxn(cnxn);
 
             // 处理workRequest
@@ -491,7 +493,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 SelectionKey key = null;
                 try {
                     key = accepted.register(selector, SelectionKey.OP_READ);
-                    // 一个sc对应一个NIOServerCnxn
+                    // 一个sc对应一个NIOServerCnxn,socket连接的上下文
                     NIOServerCnxn cnxn = createConnection(accepted, key, this);
                     key.attach(cnxn);
                     addCnxn(cnxn);
@@ -551,6 +553,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
                 // 处理key
                 // 到这里，多个客户端请求还是并发处理的
+
                 cnxn.doIO(key);
 
                 // Check if we shutdown or doIO() closed this connection
@@ -780,7 +783,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
 
         // ensure thread is started once and only once
-        // 启动接收连接线程
+        // 启动接收连接线程 SocketChannel
         if (acceptThread.getState() == Thread.State.NEW) {
             acceptThread.start();
         }
@@ -791,9 +794,11 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
     }
 
+    // 绑定端口，以便接收客户端请求
+    //
     @Override
     public void startup(ZooKeeperServer zks, boolean startServer) throws IOException, InterruptedException {
-        // 1. 初始化WorkerService
+        // 1. 初始化WorkerService 线程池
         // 2. 启动SelectorThread，负责接收读写就绪事件
         // 3. 启动AcceptThread， 负责接收连接事件
         start();

@@ -512,7 +512,7 @@ public class ClientCnxn {
                 // materialize the watchers based on the event
                 // watcher是ZKWatchManager， 客户端Watch管理器
                 // 传入事件的状态、事件的类型、事件所对应的path
-                // 得到的watchers表示当前触发的event应该要触发watcher执行
+                // 得到的watchers表示当前触发的event应该要触发watcher列表
                 watchers = watcher.materialize(event.getState(), event.getType(), event.getPath());
             } else {
                 watchers = new HashSet<Watcher>();
@@ -754,7 +754,7 @@ public class ClientCnxn {
 
         // 在一个请求数据包处理完成后，如果需要注册Watcher就进行注册
         if (p.watchRegistration != null) {
-            // 这里会进行注册
+            // 这里会注册watch
             p.watchRegistration.register(err);
         }
         // Add all the removed watch events to the event queue, so that the
@@ -916,6 +916,8 @@ public class ClientCnxn {
                 // 如果是一个watch事件通知的响应
                 LOG.debug("Got notification session id: 0x{}",
                     Long.toHexString(sessionId));
+
+                // 接收到了一个Watcher事件
                 WatcherEvent event = new WatcherEvent();
                 event.deserialize(bbia, "response");
 

@@ -1603,6 +1603,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // to the start of the txn
         incomingBuffer = incomingBuffer.slice();
 
+        // 处理addAuth命令，把auth信息添加到ServerCnxn中
         if (h.getType() == OpCode.auth) {
             // addAuth
             LOG.info("got auth packet {}", cnxn.getRemoteSocketAddress());
@@ -1611,6 +1612,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
             //
             String scheme = authPacket.getScheme();
+            // scheme为digest时，对应的就是DigestAuthenticationProvider
             ServerAuthenticationProvider ap = ProviderRegistry.getServerProvider(scheme);
             Code authReturn = KeeperException.Code.AUTHFAILED;
             if (ap != null) {

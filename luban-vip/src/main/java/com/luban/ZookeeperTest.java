@@ -16,7 +16,7 @@ public class ZookeeperTest {
         ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181", 30* 1000, new Watcher() {
             @Override
             public void process(WatchedEvent event) {
-//                System.out.println(event.getType());
+                System.out.println(event.getType());
             }
         });
 
@@ -26,11 +26,12 @@ public class ZookeeperTest {
         // 创建成功则返回该节点的路径，注意顺序节点
 //        String a = zooKeeper.create("/luban123", "123".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT_SEQUENTIAL);
 
+//        System.in.read();
 
 //        // 获取某个节点的内容，并设置一个监听器
 //        // stat用来承载节点的其他信息
 //        Stat stat = new Stat();
-
+//
 //        byte[] result = zooKeeper.getData("/luban123", new Watcher() {
 //            @Override
 //            public void process(WatchedEvent event) {
@@ -51,7 +52,7 @@ public class ZookeeperTest {
 
         // 判断某节点是否存在，如果存在则返回该节点的状态（并没有节点的内容）
         // 同时设置一个监听器
-//        Stat stat = zooKeeper.exists("/luban", new Watcher() {
+//        zooKeeper.exists("/luban", new Watcher() {
 //            @Override
 //            public void process(WatchedEvent event) {
 //                System.out.println(event);
@@ -78,6 +79,7 @@ public class ZookeeperTest {
 //                System.out.println("PERSISTENT_RECURSIVE"+event);
 //            }
 //        }, AddWatchMode.PERSISTENT_RECURSIVE);
+
 
 //
 //        zooKeeper.addWatch("/luban123", new Watcher() {
@@ -112,7 +114,7 @@ public class ZookeeperTest {
 //        }, AddWatchMode.PERSISTENT_RECURSIVE);
 
 
-        System.in.read();
+
 
     }
 }

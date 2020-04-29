@@ -181,12 +181,13 @@ public class NIOServerCnxn extends ServerCnxn {
             incomingBuffer.flip();
             packetReceived(4 + incomingBuffer.remaining());
 
-            //
+            // 初始化好了
             if (!initialized) {
                 // socket连接建立好了，还没有初始化，处理ConnectRequest
                 readConnectRequest();
             } else {
                 // 处理其他命令请求
+                // 增删查改
                 readRequest();
             }
             lenBuffer.clear();
@@ -330,7 +331,7 @@ public class NIOServerCnxn extends ServerCnxn {
             }
             if (k.isReadable()) {
                 // 读就绪，把数据读到incomingBuffer中，
-                int rc = sock.read(incomingBuffer); // 一开始读4个字节数据，也就是读数据包的长度
+                int rc = sock.read(incomingBuffer); // 45 一开始读4个字节数据，也就是读数据包的长度
 
                 if (rc < 0) {
                     // 没有读到数据则报错
@@ -345,7 +346,7 @@ public class NIOServerCnxn extends ServerCnxn {
                     if (incomingBuffer == lenBuffer) { // start of next request
                         incomingBuffer.flip();
                         isPayload = readLength(k);
-                        incomingBuffer.clear();
+                        incomingBuffer.clear(); // 54byte
                     } else {
                         // 读到的是真正的packet数据（也就是命令）
                         // continuation
@@ -553,7 +554,7 @@ public class NIOServerCnxn extends ServerCnxn {
      */
     private boolean readLength(SelectionKey k) throws IOException {
         // Read the length, now get the buffer
-        int len = lenBuffer.getInt();   // 前四个字节表示packet的大小
+        int len = lenBuffer.getInt();   // 100 前四个字节表示packet的大小
         if (!initialized && checkFourLetterWord(sk, len)) {
             return false;
         }
