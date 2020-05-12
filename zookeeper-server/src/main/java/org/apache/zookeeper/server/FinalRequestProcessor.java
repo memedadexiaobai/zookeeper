@@ -119,7 +119,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         }
 
         // 1. 会更新ZKDatabase
-        // 2. 触发watch
+        // 2. 触发watcher
         // 3. 如果是集群模式就把request添加到committedLog队列中
         ProcessTxnResult rc = zks.processTxn(request);
 
@@ -588,6 +588,7 @@ public class FinalRequestProcessor implements RequestProcessor {
             err = Code.MARSHALLINGERROR;
         }
 
+        //
         ReplyHeader hdr = new ReplyHeader(request.cxid, lastZxid, err.intValue());
 
         updateStats(request, lastOp, lastZxid);
@@ -619,6 +620,7 @@ public class FinalRequestProcessor implements RequestProcessor {
                 }
             }
 
+            // 关闭socket
             if (request.type == OpCode.closeSession) {
                 cnxn.sendCloseSession();
             }

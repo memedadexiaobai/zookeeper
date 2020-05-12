@@ -104,6 +104,7 @@ public class DataTree {
      */
     private final NodeHashMap nodes;
 
+    // 下面两个只是属性名字不同而已，都是WatchManager实例对象
     private IWatchManager dataWatches;
 
     private IWatchManager childWatches;
@@ -301,8 +302,8 @@ public class DataTree {
 
         nodeDataSize.set(approximateDataSize());
         try {
-            dataWatches = WatchManagerFactory.createWatchManager();
-            childWatches = WatchManagerFactory.createWatchManager();
+            dataWatches = WatchManagerFactory.createWatchManager();  // watchTable  map  {"/luban123": Set<ServerCnxn>}
+            childWatches = WatchManagerFactory.createWatchManager(); // watchTable  map  {"/luban123“: Set<ServerCnxn>}
         } catch (Exception e) {
             LOG.error("Unexpected exception when creating WatchManager, exiting abnormally", e);
             ServiceUtils.requestSystemExit(ExitCode.UNEXPECTED_ERROR.getValue());
@@ -469,7 +470,6 @@ public class DataTree {
         String parentName = path.substring(0, lastSlash); // 父节点
         String childName = path.substring(lastSlash + 1); // 本节点
 
-        //
         StatPersisted stat = createStat(zxid, time, ephemeralOwner);
 
         // 拿到父节点
@@ -518,8 +518,10 @@ public class DataTree {
                 parent.stat.setPzxid(zxid);
             }
 
+            // 创建并添加Node
             DataNode child = new DataNode(data, longval, stat);
             parent.addChild(childName);
+
             nodes.postChange(parentName, parent);
             nodeDataSize.addAndGet(getNodeSize(path, child.data));
             nodes.put(path, child);
@@ -567,8 +569,12 @@ public class DataTree {
         }
         updateWriteStat(path, bytes);
 
+        // /luban/luban123/
         // 触发watch, dataWatches和childWatches不要和客户端里的一样理解，这两个相当于两个工具类，都是WatchManager类的实例
+        // getData("/luban/xxxx" new Wathcer() {})
         dataWatches.triggerWatch(path, Event.EventType.NodeCreated);
+
+        // getChildren()
         childWatches.triggerWatch(parentName.equals("") ? "/" : parentName, Event.EventType.NodeChildrenChanged);
     }
 
@@ -696,6 +702,7 @@ public class DataTree {
         nodeDataSize.addAndGet(getNodeSize(path, data) - getNodeSize(path, lastdata));
 
         updateWriteStat(path, dataBytes);
+        //
         dataWatches.triggerWatch(path, EventType.NodeDataChanged);
         return s;
     }
@@ -735,6 +742,7 @@ public class DataTree {
         // path : Set<Watcher>
         synchronized (n) {
             n.copyStat(stat);
+            // watcher的ServerCnxn
             if (watcher != null) {
                 dataWatches.addWatch(path, watcher);
             }

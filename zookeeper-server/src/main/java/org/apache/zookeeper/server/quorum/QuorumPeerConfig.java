@@ -198,7 +198,7 @@ public class QuorumPeerConfig {
             throw new ConfigException("Error processing " + path, e);
         }
 
-        // 这里会去生成
+        // 上面是基于老版的配置文件去解析配置，下面是基于新版的动态配置文件去解析配置
         if (dynamicConfigFileStr != null) {
             try {
                 Properties dynamicCfg = new Properties();

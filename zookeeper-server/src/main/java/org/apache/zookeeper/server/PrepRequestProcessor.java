@@ -498,6 +498,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                         }
                     }
                     if (joiningServers != null) {
+                        // 遍历add的Server
                         for (String joiner : joiningServers) {
                             // joiner should have the following format: server.x = server_spec;client_spec
                             String[] parts = StringUtils.split(joiner, "=").toArray(new String[0]);
@@ -687,12 +688,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             data = createRequest.getData();
             ttl = -1;
         }
-        // 节点类型（临时节点、顺序节点...）
+        // 节点类型（临时节点、顺序节点...） -s -e
         CreateMode createMode = CreateMode.fromFlag(flags);
 
         validateCreateRequest(path, createMode, request, ttl);
 
-        // 当前节点的父节点
+        // 当前节点的父节点 /xx
         String parentPath = validatePathForCreate(path, request.sessionId);
 
         List<ACL> listACL = fixupACL(path, request.authInfo, acl);
@@ -702,7 +703,10 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
 
         zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.CREATE, request.authInfo, path, listACL);
 
-        // 创建
+         // create -s /xx/luban_
+        // luban_000002
+
+        // children的cversion    1
         int parentCVersion = parentRecord.stat.getCversion();
 
         if (createMode.isSequential()) {
@@ -805,14 +809,14 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         // request.type + " id = 0x" + Long.toHexString(request.sessionId));
 
         // 清空 日志头和日志内容，下面会重新进行赋值
-        request.setHdr(null);
-        request.setTxn(null);
+        request.setHdr(null);  // TxnHeader
+        request.setTxn(null);  // Txn
 
         try {
             switch (request.type) {
             case OpCode.createContainer:
-            case OpCode.create:
-            case OpCode.create2:
+                case OpCode.create:
+                case OpCode.create2:
                 // 这里new出来的这个对象，只在pRequest2Txn方法中用了，该对象是Record的实现类，表示日志体
                 CreateRequest create2Request = new CreateRequest();
                 // 注意这里会先调用zks.getNextZxid()获取下一个zxid（自增）
@@ -987,7 +991,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         request.zxid = zks.getZxid();
         ServerMetrics.getMetrics().PREP_PROCESS_TIME.add(Time.currentElapsedTime() - request.prepStartTime);
 
-
+        // 调用下一个processor
         nextProcessor.processRequest(request);
     }
 

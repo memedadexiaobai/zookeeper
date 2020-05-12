@@ -105,7 +105,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         super("SessionTracker", listener);
         this.expirer = expirer;
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
-        this.sessionsWithTimeout = sessionsWithTimeout;
+        this.sessionsWithTimeout = sessionsWithTimeout;  // 持久化的时候，只持久化了sessionId和Timeout，不用持久化SessionImpl
         this.nextSessionId.set(initializeNextSessionId(serverId));
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
             trackSession(e.getKey(), e.getValue());
@@ -192,6 +192,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
 
     private void updateSessionExpiry(SessionImpl s, int timeout) {
         logTraceTouchSession(s.sessionId, timeout, "");
+        // 更新session的过期时间点
         sessionExpiryQueue.update(s, timeout);
     }
 
@@ -264,7 +265,11 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     @Override
     public synchronized boolean trackSession(long id, int sessionTimeout) {
         boolean added = false;
+        // 跟踪一个Session
+        // 1. 先生成一个SessionImpl对象，并放入sessionsById中保存
+        // 2. 更新sessionExpiryQueue中保存的当前session的过期时间点
 
+        //
         SessionImpl session = sessionsById.get(id);
         if (session == null) {
             session = new SessionImpl(id, sessionTimeout);

@@ -554,7 +554,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 // 处理key
                 // 到这里，多个客户端请求还是并发处理的
 
-                cnxn.doIO(key);
+                cnxn.doIO(key); // 顺序
 
                 // Check if we shutdown or doIO() closed this connection
                 if (stopped) {

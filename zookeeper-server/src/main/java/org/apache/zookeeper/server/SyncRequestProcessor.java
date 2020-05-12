@@ -145,8 +145,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     }
 
     private boolean shouldSnapshot() {
-        int logCount = zks.getZKDatabase().getTxnCount();
-        long logSize = zks.getZKDatabase().getTxnSize();
+        int logCount = zks.getZKDatabase().getTxnCount();  // log1.output txncount   9
+        long logSize = zks.getZKDatabase().getTxnSize();  // log
         return (logCount > (snapCount / 2 + randRoll))
                || (snapSizeInBytes > 0 && logSize > (snapSizeInBytes / 2 + randSize));
     }
@@ -174,12 +174,13 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
 
                 // poll
                 // 移除并返回队列头部的元素，如果队列为空，则返回null
+                // 批量持久请求
                 Request si = queuedRequests.poll(pollTime, TimeUnit.MILLISECONDS);
 
                 if (si == null) {
-                    // 如果从queuedRequests队列中没有获取到请求了，那么就把直接接收到的请求flush
+                    // 如果从queuedRequests队列中没有获取到请求了，那么就把接收到的请求flush
                     /* We timed out looking for more writes to batch, go ahead and flush immediately */
-                    flush();
+                    flush(); //
                     // 移除并返回队列头部的元素，如果队列为空，则阻塞
                     si = queuedRequests.take();
                 }
@@ -194,14 +195,15 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // track the number of records written to the log
                 // si表示Request，此时的Request中已经有日志头和日志体中了，可以持久化了
                 // append只是把request添加到stream中
-                // 只有当Request中的hdr为null时才返回false
+                // 只有当Request中的hdr为null时才返回false   读请求
                 if (zks.getZKDatabase().append(si)) {
 
                     // 是否应该打快照了
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
                         // roll the log
-                        zks.getZKDatabase().rollLog();
+                        // 把之前没有持久化的Request先持久化了
+                        zks.getZKDatabase().rollLog();  // logstrea=null
                         // take a snapshot
                         if (!snapThreadMutex.tryAcquire()) {
                             LOG.warn("Too busy to snap, skipping");
@@ -209,6 +211,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                             new ZooKeeperThread("Snapshot Thread") {
                                 public void run() {
                                     try {
+                                        // 持久    内存数据完成
                                         zks.takeSnapshot();
                                     } catch (Exception e) {
                                         LOG.warn("Unexpected exception", e);
@@ -238,7 +241,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 }
 
                 // 把当前请求添加到待flush队列中
-                toFlush.add(si);
+                toFlush.add(si);  // 写 读
 
                 // 判断是否可以Flush了
                 // 当累积了maxBatchSize个请求，或者达到某个定时点了就进行持久化
@@ -271,7 +274,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
         if (this.nextProcessor == null) {
             this.toFlush.clear();
         } else {
-            while (!this.toFlush.isEmpty()) {
+            // 把toFlush队列中的Reqeust获取出来，并调用nnextProcessor
+            while (!this.toFlush.isEmpty()) {    // log.1  output
                 // 把toFlush中的请求交给nextProcessor
                 final Request i = this.toFlush.remove();
                 long latency = Time.currentElapsedTime() - i.syncQueueStartTime;

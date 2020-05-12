@@ -644,7 +644,7 @@ public class ZKDatabase {
      * @return true if the append was succesfull and false if not
      */
     public boolean append(Request si) throws IOException {
-        txnCount.incrementAndGet();
+        txnCount.incrementAndGet(); // flush
         return this.snapLog.append(si);
     }
 

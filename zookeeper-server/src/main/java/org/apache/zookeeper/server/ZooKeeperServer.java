@@ -271,6 +271,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
      * {@link requestFinished(Request)} method which performs the decrement if
      * needed.
      */
+    // 100M
     private volatile int largeRequestMaxBytes = 100 * 1024 * 1024;
 
     /**
@@ -487,8 +488,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
 
         // Clean up dead sessions
+        // 当前服务器上存在的临时节点对应的session
         List<Long> deadSessions = new ArrayList<>();
         for (Long session : zkDb.getSessions()) {
+            // 如果临时节点的session都不存在在getSessionWithTimeOuts中，那么这个session是不对的
             if (zkDb.getSessionWithTimeOuts().get(session) == null) {
                 deadSessions.add(session);
             }
@@ -496,6 +499,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
         for (long session : deadSessions) {
             // TODO: Is lastProcessedZxid really the best thing to use?
+            // 关闭session,删除临时节点
             killSession(session, zkDb.getDataTreeLastProcessedZxid());
         }
 
@@ -573,9 +577,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     private void close(long sessionId) {
-        //
+        // 清空关于session的map，删除临时节点
         Request si = new Request(null, sessionId, 0, OpCode.closeSession, null, null);
-        //
         submitRequest(si);
     }
 
@@ -908,7 +911,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
 
     /**
-     * This structure is used to facilitate information sharing between PrepRP
+     * This structure is used to facilitate(促进) information sharing between PrepRP
      * and FinalRP.
      */
     static class ChangeRecord {
@@ -964,14 +967,17 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             passwd = new byte[0];
         }
         long sessionId = sessionTracker.createSession(timeout);
+
         Random r = new Random(sessionId ^ superSecret);
         r.nextBytes(passwd);
         ByteBuffer to = ByteBuffer.allocate(4);
         to.putInt(timeout);
         cnxn.setSessionId(sessionId);
 
+        // 模拟一个createSession的请求
         Request si = new Request(cnxn, sessionId, 0, OpCode.createSession, to, null);
         submitRequest(si);
+
         return sessionId;
     }
 
@@ -1097,6 +1103,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
                     // processor it should wait for setting up the request
                     // processor chain. The state will be updated to RUNNING
                     // after the setup.
+                    // 等着RequestProcessor初始化好
                     while (state == State.INITIAL) {
                         wait(1000);
                     }
@@ -1135,8 +1142,12 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             touch(si.cnxn);
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
+                // 还没研究
                 setLocalSessionFlag(si);
+
                 firstProcessor.processRequest(si);
+
+                // 正在处理的请求+1
                 if (si.cnxn != null) {
                     incInProcess();
                 }
@@ -1414,6 +1425,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // 客户端设置的sessionTimeout
         int sessionTimeout = connReq.getTimeOut();
         byte[] passwd = connReq.getPasswd();
+
         int minSessionTimeout = getMinSessionTimeout();
         //
         if (sessionTimeout < minSessionTimeout) {
@@ -1580,10 +1592,20 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         }
     }
 
+    /**
+     *
+     * @param cnxn  socket连接
+     * @param incomingBuffer 客户端发送的数据
+     * @throws IOException
+     */
     public void processPacket(ServerCnxn cnxn, ByteBuffer incomingBuffer) throws IOException {
         // We have the request, now process and setup for next
         InputStream bais = new ByteBufferInputStream(incomingBuffer);
         BinaryInputArchive bia = BinaryInputArchive.getArchive(bais);
+
+        // Request
+        // RequestHeader
+
         RequestHeader h = new RequestHeader();
         h.deserialize(bia, "header");
 
@@ -1603,8 +1625,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // to the start of the txn
         incomingBuffer = incomingBuffer.slice();
 
-        // 处理addAuth命令，把auth信息添加到ServerCnxn中
-        if (h.getType() == OpCode.auth) {
+        // 处理addAuth命令，把auth信息添加到ServerCnxn中 // ACl create /xx/node
+        if (h.getType() == OpCode.auth) {   // addAuth xx
             // addAuth
             LOG.info("got auth packet {}", cnxn.getRemoteSocketAddress());
             AuthPacket authPacket = new AuthPacket();
@@ -1653,6 +1675,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             processSasl(incomingBuffer, cnxn, h);
         } else {
             // 处理增删查改的命令
+            // create delete set
 
             // 需要验证，但是没有验证
             if (shouldRequireClientSaslAuth() && !hasCnxSASLAuthenticated(cnxn)) {
@@ -1663,8 +1686,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             } else {
 
                 // 主逻辑
+                // create /luban 123
+                // create /lubanxx 123
 
                 Request si = new Request(cnxn, cnxn.getSessionId(), h.getXid(), h.getType(), incomingBuffer, cnxn.getAuthInfo());
+
                 int length = incomingBuffer.limit();
                 // 是不是大请求
                 if (isLargeRequest(length)) {

@@ -264,9 +264,12 @@ public class Leader extends LearnerMaster {
      */
     public boolean isQuorumSynced(QuorumVerifier qv) {
         HashSet<Long> ids = new HashSet<Long>();
+        // 比如qv中是1,4
+        //
         if (qv.getVotingMembers().containsKey(self.getId())) {
             ids.add(self.getId());
         }
+        // 当前leader领导的follower
         synchronized (forwardingFollowers) {
             for (LearnerHandler learnerHandler : forwardingFollowers) {
                 if (learnerHandler.synced() && qv.getVotingMembers().containsKey(learnerHandler.getSid())) {

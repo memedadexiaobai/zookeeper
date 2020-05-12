@@ -406,6 +406,8 @@ public class ZooKeeperMain {
 
         LOG.debug("Processing {}", cmd);
 
+        // get /luba
+        // createt /balun123
         if (cmd.equals("quit")) {
             zk.close();
             ServiceUtils.requestSystemExit(exitCode);

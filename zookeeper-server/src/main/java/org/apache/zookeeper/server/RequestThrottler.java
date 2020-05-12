@@ -137,6 +137,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 }
 
                 Request request = submittedRequests.take();
+                // 退出某个线程的做法
                 if (Request.requestOfDeath == request) {
                     break;
                 }
@@ -146,10 +147,12 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 }
 
                 // Throttling is disabled when maxRequests = 0
+                // 阈值10 ,, 11 closeSession
                 if (maxRequests > 0) {
                     while (!killed) {
                         if (dropStaleRequests && request.isStale()) {
                             // Note: this will close the connection
+                            // closeSession
                             dropRequest(request);
                             ServerMetrics.getMetrics().STALE_REQUESTS_DROPPED.add(1);
                             request = null;
@@ -174,7 +177,8 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                     if (request.isStale()) {
                         ServerMetrics.getMetrics().STALE_REQUESTS.add(1);
                     }
-                    zks.submitRequestNow(request);
+                    //
+                    zks.submitRequestNow(request); //
                 }
             }
         } catch (InterruptedException e) {

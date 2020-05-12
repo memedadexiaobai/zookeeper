@@ -162,7 +162,7 @@ public class ZooKeeper implements AutoCloseable {
     @Deprecated
     public static final String SECURE_CLIENT = "zookeeper.client.secure";
 
-    protected final ClientCnxn cnxn;
+    protected final ClientCnxn cnxn;    //
     private static final Logger LOG;
 
     static {
@@ -279,7 +279,8 @@ public class ZooKeeper implements AutoCloseable {
      */
     static class ZKWatchManager implements ClientWatchManager {
 
-        // 以下三个是一次性的
+        // 以下三个是一次性的 path :
+        // getData \ getChildren \ exist
         private final Map<String, Set<Watcher>> dataWatches = new HashMap<String, Set<Watcher>>();
         private final Map<String, Set<Watcher>> existWatches = new HashMap<String, Set<Watcher>>();
         private final Map<String, Set<Watcher>> childWatches = new HashMap<String, Set<Watcher>>();
@@ -596,15 +597,19 @@ public class ZooKeeper implements AutoCloseable {
                 synchronized (existWatches) {
                     addTo(existWatches.remove(clientPath), result);
                 }
+
                 addPersistentWatches(clientPath, result);
                 break;
+
             case NodeChildrenChanged:
                 synchronized (childWatches) {
                     addTo(childWatches.remove(clientPath), result);
                 }
+
                 addPersistentWatches(clientPath, result);
                 break;
             case NodeDeleted:
+
                 synchronized (dataWatches) {
                     addTo(dataWatches.remove(clientPath), result);
                 }
@@ -619,6 +624,7 @@ public class ZooKeeper implements AutoCloseable {
                 synchronized (childWatches) {
                     addTo(childWatches.remove(clientPath), result);
                 }
+
                 addPersistentWatches(clientPath, result);
                 break;
             default:
@@ -640,6 +646,7 @@ public class ZooKeeper implements AutoCloseable {
                 addTo(persistentWatches.get(clientPath), result);
             }
             synchronized (persistentRecursiveWatches) {
+                // /luban123/12/123
                 for (String path : PathParentIterator.forAll(clientPath).asIterable()) {
                     addTo(persistentRecursiveWatches.get(path), result);
                 }
@@ -651,7 +658,7 @@ public class ZooKeeper implements AutoCloseable {
      * Register a watcher for a particular path.
      */
     public abstract class WatchRegistration {
-        // Watch注册对象，对于的path以及Watcher
+        // Watch注册对象，需要注册的path以及Watcher
 
         private Watcher watcher;
         private String clientPath;
@@ -673,7 +680,8 @@ public class ZooKeeper implements AutoCloseable {
 
                 // 当前WatcherRegistration是什么类型就进入对应的getWatchers方法中
                 // 把Watcher注册到ZKWatchManager中
-                Map<String, Set<Watcher>> watches = getWatches(rc);
+                // 根据WatchRegistration具体的实现类，获取当前watcher应该要注册进去的map（ dataWatches 、existWatches 、childWatches）
+                Map<String, Set<Watcher>> watches = getWatches(rc);  // api, map
                 synchronized (watches) {
                     // 把当前watcher添加到Set中，完成watcher的注册
                     Set<Watcher> watchers = watches.get(clientPath);
@@ -709,6 +717,8 @@ public class ZooKeeper implements AutoCloseable {
         @Override
         protected Map<String, Set<Watcher>> getWatches(int rc) {
             // rc == 0表示请求没有错误，注册的是dataWatches, 如果rc
+            // 该节点存在，则把exists注册的watch添加到dataWatches中去
+            // 该节点不存在，则把exists注册的watch添加到existWatches中去
             return rc == 0 ? watchManager.dataWatches : watchManager.existWatches;
         }
 
@@ -1053,7 +1063,7 @@ public class ZooKeeper implements AutoCloseable {
             // 使用什么技术去建立socket连接,nio还是netty,默认是nio，这里不会去建立socket连接，只是拿到一个ClientCnxnSocket对象
             getClientCnxnSocket(),
             canBeReadOnly);
-        cnxn.start();
+        cnxn.start(); //
     }
 
     // @VisibleForTesting
@@ -1128,7 +1138,7 @@ public class ZooKeeper implements AutoCloseable {
      *             if an invalid chroot path is specified
      */
     public ZooKeeper(
-        String connectString,
+        String connectString,  //
         int sessionTimeout,
         Watcher watcher,
         boolean canBeReadOnly) throws IOException {
@@ -1539,6 +1549,7 @@ public class ZooKeeper implements AutoCloseable {
 
     // default hostprovider
     private static HostProvider createDefaultHostProvider(String connectString) {
+
         return new StaticHostProvider(new ConnectStringParser(connectString).getServerAddresses());
     }
 
@@ -2370,6 +2381,7 @@ public class ZooKeeper implements AutoCloseable {
         // the watch contains the un-chroot path
         WatchRegistration wcb = null;
         if (watcher != null) {
+            // DataWatchRegistration 注册
             wcb = new DataWatchRegistration(watcher, clientPath);
         }
 
@@ -2381,7 +2393,9 @@ public class ZooKeeper implements AutoCloseable {
         GetDataRequest request = new GetDataRequest();
         request.setPath(serverPath);
         request.setWatch(watcher != null);
+
         GetDataResponse response = new GetDataResponse();
+        //
 
         //
         ReplyHeader r = cnxn.submitRequest(h, request, response, wcb);
@@ -3445,6 +3459,7 @@ public class ZooKeeper implements AutoCloseable {
         try {
             Constructor<?> clientCxnConstructor = Class.forName(clientCnxnSocketName)
                                                        .getDeclaredConstructor(ZKClientConfig.class);
+            // 没有创建socket
             ClientCnxnSocket clientCxnSocket = (ClientCnxnSocket) clientCxnConstructor.newInstance(getClientConfig());
             return clientCxnSocket;
         } catch (Exception e) {

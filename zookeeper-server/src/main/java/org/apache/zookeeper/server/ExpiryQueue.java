@@ -82,12 +82,13 @@ public class ExpiryQueue<E> {
      *                 changed, or null if unchanged
      */
     public Long update(E elem, int timeout) {
-        // elemMap中保存的是某一个session的过期截止时间
+        // 之前保存的session的过期时间点
         Long prevExpiryTime = elemMap.get(elem);
         long now = Time.currentElapsedTime();
 
         // 基于当前时间和设置的超时时间，以及ticktime ,计算出下一个过期时间
         // 比如当前时间 20s.111毫秒   timeout是10秒，那么过期时间不是30s.111毫秒，而是32s
+        // 下一次过期的时间点
         Long newExpiryTime = roundToNextInterval(now + timeout);
 
         // 如果过期时间没有变化，则不用更新
@@ -96,7 +97,7 @@ public class ExpiryQueue<E> {
             return null;
         }
 
-        // expiryMap中保存的是某个过期时间对于的session
+        // expiryMap中保存的是某个过期时间（时间点）对应的session集合
         // First add the elem to the new expiry time bucket in expiryMap.
         Set<E> set = expiryMap.get(newExpiryTime);
         if (set == null) {

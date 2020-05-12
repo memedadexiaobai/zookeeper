@@ -1,24 +1,85 @@
 package com.luban;
 
 import org.apache.zookeeper.*;
-import org.apache.zookeeper.admin.ZooKeeperAdmin;
-import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Stat;
 
 import java.io.IOException;
-import java.util.List;
 
 public class ZookeeperTest {
 
     public static void main(String[] args) throws IOException, KeeperException, InterruptedException {
         // 连接服务端，连接地址可以写多个，比如"127.0.0.1:2181,127.0.0.1:2182,127.0.0.1:2183"
         // 当客户端与服务端的连接断掉后就会重试去连其他的服务器地址
-        ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181", 30* 1000, new Watcher() {
+        // watcher
+
+        // 初始化timeout
+        // 启动SendThread(socket, 初始化， 读写事件, 发送时), EventTrhead
+        // outgoingqueue packet pendingqueue
+
+        ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181", 30 * 1000, new Watcher() {
             @Override
             public void process(WatchedEvent event) {
                 System.out.println(event.getType());
             }
         });
+        //
+
+
+
+//
+//        Stat stat = new Stat();
+
+
+
+
+//        byte[] result = zooKeeper.getData("/luban123", new Watcher() {
+//            @Override
+//            public void process(WatchedEvent event) {
+//                System.out.println("213");
+//            }
+//        }, stat);  // /qingq getData ---> outgoingqueue
+
+//        byte[] result = zooKeeper.exists("/luban123", new Watcher() {
+//            @Override
+//            public void process(WatchedEvent event) {
+//                System.out.println("213");
+//            }
+//        }, stat);
+
+        // set /luban123
+
+//        zooKeeper.getData("/luban123111", new Watcher() {
+//            @Override
+//            public void process(WatchedEvent event) {
+//                System.out.println("213");
+//            }
+//        }, stat);  // /qingq getData ---> outgoingqueue
+//
+//       zooKeeper.getChildren("/luban123", new Watcher() {
+//            @Override
+//            public void process(WatchedEvent event) {
+//                System.out.println("213");
+//            }
+//        }, stat);  // /qingq getData ---> outgoingqueue
+
+
+//        String s = "123";
+//        zooKeeper.getData("/luban123", false, new AsyncCallback.DataCallback() {
+//            @Override
+//            public void processResult(int rc, String path, Object ctx, byte[] data, Stat stat) {
+//
+//
+//            }
+//        }, s);
+//
+//        zooKeeper.getData("/luban123", false, new AsyncCallback.DataCallback() {
+//            @Override
+//            public void processResult(int rc, String path, Object ctx, byte[] data, Stat stat) {
+//                System.out.println(2);
+//            }
+//        }, s);
+        //
+//        System.in.read();
 
 
         // 创建一个节点，并设置内容，设置ACL(该节点的权限设置)， 节点类型（7种：持久节点、临时节点、持久顺序节点、临时顺序节点、容器节点、TTL节点、TTL顺序节点）
@@ -30,16 +91,24 @@ public class ZookeeperTest {
 
 //        // 获取某个节点的内容，并设置一个监听器
 //        // stat用来承载节点的其他信息
-//        Stat stat = new Stat();
-//
-//        byte[] result = zooKeeper.getData("/luban123", new Watcher() {
-//            @Override
-//            public void process(WatchedEvent event) {
-//
-//                System.out.println(event.getType());
-//            }
-//        }, stat);
 
+//
+
+
+
+
+//        System.out.println("123");
+//
+//        zooKeeper.getData("/luban123", false, new AsyncCallback.DataCallback() {
+//            @Override
+//            public void processResult(int rc, String path, Object ctx, byte[] data, Stat stat) {
+//                System.out.println(2);
+//            }
+//        }, s);
+//
+//        System.out.println(123);
+//
+//        System.in.read();
 
 
         // 修改节点的内容，这里有乐观锁,version表示本次修改, -1表示不检查版本强制更新
@@ -58,7 +127,7 @@ public class ZookeeperTest {
 //                System.out.println(event);
 //            }
 //        });
-//        System.out.println(stat);
+//        System.in.read();
 
 
         // 获取孩子节点
@@ -81,15 +150,17 @@ public class ZookeeperTest {
 //        }, AddWatchMode.PERSISTENT_RECURSIVE);
 
 
+        // getData(".ba", new Wath)  GetDataReqeust({"/123", Set<Servn>})   AddWathcRequest  ("123", Set<SErvncxnx>)
+//     /luban123/123123
+        //  /set /123
+        zooKeeper.addWatch("/luban123", new Watcher() {
+            @Override
+            public void process(WatchedEvent event) {
+                System.out.println("PERSISTENT"+event);
+            }
+        }, AddWatchMode.PERSISTENT);  ///luban123/1213/123/123
 //
-//        zooKeeper.addWatch("/luban123", new Watcher() {
-//            @Override
-//            public void process(WatchedEvent event) {
-//                System.out.println("PERSISTENT"+event);
-//            }
-//        }, AddWatchMode.PERSISTENT);
-//
-//        System.in.read();
+        System.in.read();
 
         // 异步调用
 //        String ctx = "test";
@@ -112,8 +183,6 @@ public class ZookeeperTest {
 //                System.out.println(event);
 //            }
 //        }, AddWatchMode.PERSISTENT_RECURSIVE);
-
-
 
 
     }

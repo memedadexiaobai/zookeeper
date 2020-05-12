@@ -270,6 +270,7 @@ public class FileTxnLog implements TxnLog, Closeable {
     // txn-日志体
     @Override
     public synchronized boolean append(TxnHeader hdr, Record txn, TxnDigest digest) throws IOException {
+        // 读请求
         if (hdr == null) {
             return false;
         }

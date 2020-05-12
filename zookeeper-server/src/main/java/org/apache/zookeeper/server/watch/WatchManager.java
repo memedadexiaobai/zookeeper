@@ -43,6 +43,7 @@ public class WatchManager implements IWatchManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(WatchManager.class);
 
+    // path: Set<ServerCnxn>
     private final Map<String, Set<Watcher>> watchTable = new HashMap<>();
 
     private final Map<Watcher, Set<String>> watch2Paths = new HashMap<>();
@@ -74,7 +75,8 @@ public class WatchManager implements IWatchManager {
             return false;
         }
 
-        // 这里是个Set, 一个节点会对应一个Set<Watcher>，每个客户端一个Watcher
+        // 这里是个Set, 一个path会对应一个Set<Watcher>，也就是Set<ServerCnxn>
+        // watchTable表示，现在服务端上，当前path上有多少个客户端绑定了dataWatcher或者childWatches（根据属性区分的）
         Set<Watcher> list = watchTable.get(path);
 
         if (list == null) {
@@ -86,6 +88,8 @@ public class WatchManager implements IWatchManager {
         }
         list.add(watcher);
 
+        // 当前服务器上，每个客户端对多少个path绑定了dataWatcher或者childWatches（根据属性区分的）
+        // ServerCnxn: Set<path>
         Set<String> paths = watch2Paths.get(watcher);
         if (paths == null) {
             // cnxns typically have many watches, so use default cap here
@@ -123,12 +127,14 @@ public class WatchManager implements IWatchManager {
 
     @Override
     public WatcherOrBitSet triggerWatch(String path, EventType type, WatcherOrBitSet supress) {
-        //
+
+        // 注意KeeperState
         WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
 
         Set<Watcher> watchers = new HashSet<>();
 
         // 拿到当前path的各层父path进行递归
+        // /luban123/bb/g1  // data（） children（）  watcher(递归)
         PathParentIterator pathParentIterator = getPathParentIterator(path);
         synchronized (this) {
             // 遍历路径

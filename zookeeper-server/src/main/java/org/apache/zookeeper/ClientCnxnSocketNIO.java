@@ -110,6 +110,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     initialized = true;
                 } else {
                     // 从incomingBuffer中读取响应
+                    // 增删查改
                     sendThread.readResponse(incomingBuffer);
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
@@ -117,6 +118,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                 }
             }
         }
+
         if (sockKey.isWritable()) {
             // 从outgoingQueue中获取队列的第一个Packet
             Packet p = findSendablePacket(outgoingQueue, sendThread.tunnelAuthInProgress());
@@ -130,14 +132,14 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     if ((p.requestHeader != null)
                         && (p.requestHeader.getType() != OpCode.ping)
                         && (p.requestHeader.getType() != OpCode.auth)) {
-                        // 如果不是ping请求、auth请求，则设置一个xid，xid是一个自增的id，估计服务端会用到？
+                        // 如果不是ping请求、auth请求，则设置一个xid，xid是一个自增的id，估计服务端会用到？服务端没有用到，客户端自己用，在接收到某个请求的响应时会验证一下xid
                         p.requestHeader.setXid(cnxn.getXid());
                     }
                     // 把Packet所表示的请求内容，放入到bb中
                     p.createBB();
                 }
 
-                sock.write(p.bb);
+                sock.write(p.bb);  // 发送
 
                 // 如果bb中没有剩余数据了，表示数据都发送完了
                 if (!p.bb.hasRemaining()) {
@@ -290,6 +292,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         // 尝试去连接一下
         boolean immediateConnect = sock.connect(addr);
         if (immediateConnect) {
+            // 连接初始化
             sendThread.primeConnection();
         }
     }
@@ -372,7 +375,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         // non blocking, so time is effectively a constant. That is
         // Why we just have to do this once, here
 
-        //
+        // 每次
         updateNow();
 
         for (SelectionKey k : selected) {
@@ -380,6 +383,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
 
             // 可以连接的就绪事件
             if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
+                // 判断到底连接了没有
                 if (sc.finishConnect()) {
                     // socket连接成功后，进行一些连接初始化
 
@@ -388,6 +392,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
 
                     updateSocketAddresses();
 
+                    // 连接初始化
                     sendThread.primeConnection();
                 }
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {

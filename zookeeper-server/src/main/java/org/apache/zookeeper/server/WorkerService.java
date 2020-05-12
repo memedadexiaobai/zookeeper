@@ -207,9 +207,12 @@ public class WorkerService {
 
     public void start() {
         if (numWorkerThreads > 0) {
+            // false
             if (threadsAreAssignable) {
                 for (int i = 1; i <= numWorkerThreads; ++i) {
                     // workers中有numWorkerThreads个线程池，每个线程池中只有一个线程
+                    // sessionId % numWorkerThreads。elngth ==  2
+                    // index =2
                     workers.add(Executors.newFixedThreadPool(1, new DaemonThreadFactory(threadNamePrefix, i)));
                 }
             } else {
