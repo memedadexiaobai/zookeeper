@@ -1323,7 +1323,7 @@ public class ClientCnxn {
                         // 写空闲的时候才发送心跳
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
                             // 客户端向服务端发送心跳
-//                            sendPing();
+                            sendPing();
                             // 更新lastSend
                             clientCnxnSocket.updateLastSend();
                         } else {
@@ -1486,6 +1486,7 @@ public class ClientCnxn {
             if (negotiatedSessionTimeout <= 0) {
                 state = States.CLOSED;
 
+                // eventThread
                 eventThread.queueEvent(new WatchedEvent(Watcher.Event.EventType.None, Watcher.Event.KeeperState.Expired, null));
                 eventThread.queueEventOfDeath();
 

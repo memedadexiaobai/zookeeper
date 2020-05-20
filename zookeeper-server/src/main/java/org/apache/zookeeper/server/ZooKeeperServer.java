@@ -577,7 +577,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     private void close(long sessionId) {
-        // 清空关于session的map，删除临时节点
+        // 清空关于session的map，删除临时节点   prepReqeustProcessor sync final
         Request si = new Request(null, sessionId, 0, OpCode.closeSession, null, null);
         submitRequest(si);
     }
@@ -610,7 +610,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             Long.toHexString(sessionId),
             session.getTimeout());
 
-        close(sessionId);
+        close(sessionId); //
     }
 
     public static class MissingSessionException extends IOException {
@@ -966,6 +966,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             // Possible since it's just deserialized from a packet on the wire.
             passwd = new byte[0];
         }
+        //
         long sessionId = sessionTracker.createSession(timeout);
 
         Random r = new Random(sessionId ^ superSecret);
@@ -975,6 +976,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         cnxn.setSessionId(sessionId);
 
         // 模拟一个createSession的请求
+        // getData  PRe finalReqeustProcessor
         Request si = new Request(cnxn, sessionId, 0, OpCode.createSession, to, null);
         submitRequest(si);
 
@@ -1838,7 +1840,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             // 如果是事务请求,这个请求需要被同步到其他服务器上去
 
             // Leader节点中会记录一段最近已经被提交了的请求日志，并把该请求封装为Proposal添加到committedLog队列中
-            // 并记录两个属性当前committedLog队列中最大和最小的zxid
+            // 并记录两个属性:当前committedLog队列中最大和最小的zxid
             // 这个队列是用来：当某一个Learner节点需要和Leader节点同步数据时，
             if (quorumRequest) {
                 getZKDatabase().addCommittedProposal(request);

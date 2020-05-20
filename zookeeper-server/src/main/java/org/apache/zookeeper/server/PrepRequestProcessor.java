@@ -629,6 +629,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     addChangeRecord(nodeRecord);
                 }
                 if (ZooKeeperServer.isCloseSessionTxnEnabled()) {
+                    // 持久化
                     request.setTxn(new CloseSessionTxn(new ArrayList<String>(es)));
                 }
                 zks.sessionTracker.setSessionClosing(request.sessionId);

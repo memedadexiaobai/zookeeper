@@ -50,6 +50,7 @@ public class LeaderSessionTracker extends UpgradeableSessionTracker {
         this.globalSessionTracker = new SessionTrackerImpl(expirer, sessionsWithTimeouts, tickTime, id, listener);
 
         this.localSessionsEnabled = localSessionsEnabled;
+        // 本地Session打开了，才会创建LocalSessionTracker，默认是没有打开的
         if (this.localSessionsEnabled) {
             createLocalSessionTracker(expirer, tickTime, id, listener);
         }

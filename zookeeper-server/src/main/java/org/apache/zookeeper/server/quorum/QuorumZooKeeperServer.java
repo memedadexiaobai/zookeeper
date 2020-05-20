@@ -66,6 +66,8 @@ public abstract class QuorumZooKeeperServer extends ZooKeeperServer {
         // This is called by the request processor thread (either follower
         // or observer request processor), which is unique to a learner.
         // So will not be called concurrently by two threads.
+
+        // 请求如果不是创建请求则返回null，或者本地session没有打开则也返回null
         if ((request.type != OpCode.create && request.type != OpCode.create2 && request.type != OpCode.multi)
             || !upgradeableSessionTracker.isLocalSession(request.sessionId)) {
             return null;
@@ -144,6 +146,7 @@ public abstract class QuorumZooKeeperServer extends ZooKeeperServer {
         // so that the request processor can process them correctly.
         switch (si.type) {
         case OpCode.createSession:
+            // 如果本地session开启了，则设置请求的localSession标记为true，到时该请求不会同步给其他服务器
             if (self.areLocalSessionsEnabled()) {
                 // All new sessions local by default.
                 si.setLocalSession(true);

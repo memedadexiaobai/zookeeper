@@ -50,7 +50,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     private final ExpiryQueue<SessionImpl> sessionExpiryQueue;
 
     private final ConcurrentMap<Long, Integer> sessionsWithTimeout;
-    private final AtomicLong nextSessionId = new AtomicLong();
+    private final AtomicLong nextSessionId = new AtomicLong();  // 0
 
     public static class SessionImpl implements Session {
 
@@ -88,6 +88,8 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
      * Use ">>> 8", not ">> 8" to make sure that the high order 1 byte is entirely up to the server Id(@see ZOOKEEPER-1622).
      * @param id server Id
      * @return the Session Id
+     *
+     * id
      */
     public static long initializeNextSessionId(long id) {
         long nextSid;
@@ -106,7 +108,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         this.expirer = expirer;
         this.sessionExpiryQueue = new ExpiryQueue<SessionImpl>(tickTime);
         this.sessionsWithTimeout = sessionsWithTimeout;  // 持久化的时候，只持久化了sessionId和Timeout，不用持久化SessionImpl
-        this.nextSessionId.set(initializeNextSessionId(serverId));
+        this.nextSessionId.set(initializeNextSessionId(serverId));  //
         for (Entry<Long, Integer> e : sessionsWithTimeout.entrySet()) {
             trackSession(e.getKey(), e.getValue());
         }
@@ -152,7 +154,8 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     public void run() {
         try {
             while (running) {
-                long waitTime = sessionExpiryQueue.getWaitTime();
+                // 0
+                long waitTime = sessionExpiryQueue.getWaitTime();  //
                 if (waitTime > 0) {
                     Thread.sleep(waitTime);
                     continue;
@@ -257,6 +260,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
     }
 
     public long createSession(int sessionTimeout) {
+        //  Map<SessionImpl>
         long sessionId = nextSessionId.getAndIncrement();
         trackSession(sessionId, sessionTimeout);
         return sessionId;
@@ -272,6 +276,7 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
         //
         SessionImpl session = sessionsById.get(id);
         if (session == null) {
+            // sessionId
             session = new SessionImpl(id, sessionTimeout);
         }
 
@@ -295,12 +300,16 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
                 + " session 0x" + Long.toHexString(id) + " " + sessionTimeout);
         }
 
+
         updateSessionExpiry(session, sessionTimeout);
         return added;
     }
 
+    // getDat  datatree   -- datatree
+    // xratesessoin sessionsWithTimeout-- sessionsWithTimeout
+
     public synchronized boolean commitSession(long id, int sessionTimeout) {
-        return sessionsWithTimeout.put(id, sessionTimeout) == null;
+        return sessionsWithTimeout.put(id, sessionTimeout) == null;   //
     }
 
     public boolean isTrackingSession(long sessionId) {

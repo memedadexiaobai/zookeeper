@@ -155,13 +155,18 @@ public class QuorumCnxManager {
 
     /*
      * Mapping from Peer to Thread number
+     * 为其他的每个节点单独开启一个线程SendWorker来发送数据
      */
-    final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
+    final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;  //
+    // 当前节点需要发送给其他的数据（选票信息） key为其他节点serverId
     final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;
+    // put(2, mess)
+    // put(3, mess)
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
 
     /*
      * Reception queue
+     * 本节点接收到的其他节点发送过来的消息（选票）
      */
     public final BlockingQueue<Message> recvQueue;
 
@@ -311,6 +316,7 @@ public class QuorumCnxManager {
         QuorumAuthServer authServer, QuorumAuthLearner authLearner, int socketTimeout, boolean listenOnAllIPs,
         int quorumCnxnThreadsSize, boolean quorumSaslAuthEnabled) {
 
+        // 当前节点接收的其他节点发送过来的信息
         this.recvQueue = new CircularBlockingQueue<>(RECV_CAPACITY);
         this.queueSendMap = new ConcurrentHashMap<>();
         this.senderWorkerMap = new ConcurrentHashMap<>();
@@ -334,6 +340,7 @@ public class QuorumCnxManager {
         initializeConnectionExecutor(mySid, quorumCnxnThreadsSize);
 
         // Starts listener thread that waits for connection requests
+        // 初始化一个Listener, Listener负责监听socket连接
         listener = new Listener();
         listener.setName("QuorumPeerListener");
     }
@@ -380,6 +387,7 @@ public class QuorumCnxManager {
                 sock = SOCKET_FACTORY.get();
             }
             setSockOpts(sock);
+            // 建立socket连接
             sock.connect(electionAddr.getReachableOrOne(), cnxTO);
             if (sock instanceof SSLSocket) {
                 SSLSocket sslSock = (SSLSocket) sock;
@@ -426,6 +434,7 @@ public class QuorumCnxManager {
             return true;
         }
         try {
+            // QuorumConnectionReqThread，连接线程
             connectionExecutor.execute(new QuorumConnectionReqThread(electionAddr, sid));
             connectionThreadCnt.incrementAndGet();
         } catch (Throwable e) {
@@ -509,12 +518,22 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
+        // 对方的sid比自己的id大，则关闭socket,否则关闭连接
+        // 只能大的sid连小的sid，现在这个方法是主动发起建立socket连接的一方，所以self.getId应该要比sid大
         if (sid > self.getId()) {
             LOG.info("Have smaller server identifier, so dropping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             closeSocket(sock);
             // Otherwise proceed with the connection
         } else {
             LOG.debug("Have larger server identifier, so keeping the connection: (myId:{} --> sid:{})", self.getId(), sid);
+
+            // socket连接建立好了之后
+            // 初始化SendWorker、RecvWorker
+            // 把SendWorker塞入senderWorkerMap中
+            // 针对当前的sid构造一个CircularBlockingQueue
+            // 启动SendWorker、RecvWorker线程
+            // SendWorker负责向sid发送数据，RecvWorker负责从sid接收数据
+
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
             sw.setRecv(rw);
@@ -551,6 +570,7 @@ public class QuorumCnxManager {
             din = new DataInputStream(new BufferedInputStream(sock.getInputStream()));
 
             LOG.debug("Sync handling of connection request received from: {}", sock.getRemoteSocketAddress());
+            // 处理inputstream
             handleConnection(sock, din);
         } catch (IOException e) {
             LOG.error("Exception handling connection, addr: {}, closing server connection", sock.getRemoteSocketAddress());
@@ -634,6 +654,7 @@ public class QuorumCnxManager {
         // do authenticating learner
         authServer.authenticate(sock, din);
         //If wins the challenge, then close the new connection.
+        // 现在接收到了一个socket连接，如果发起socket连接的sid比我自己的小，则把socket挂掉，不能对方来连我，只能大的sid连小的sid
         if (sid < self.getId()) {
             /*
              * This replica might still believe that the connection to sid is
@@ -652,6 +673,7 @@ public class QuorumCnxManager {
             closeSocket(sock);
 
             if (electionAddr != null) {
+                // 我主动去连sid
                 connectOne(sid, electionAddr);
             } else {
                 connectOne(sid);
@@ -690,17 +712,22 @@ public class QuorumCnxManager {
          * If sending message to myself, then simply enqueue it (loopback).
          */
         if (this.mySid == sid) {
+            // 发送给自己，
             b.position(0);
+            // 将ByteBuffer转化成Message,直接添加给recvQueue，没有经过网络
             addToRecvQueue(new Message(b.duplicate(), sid));
             /*
              * Otherwise send to the corresponding thread to send.
              */
         } else {
+
             /*
              * Start a new connection if doesn't have one already.
              */
             BlockingQueue<ByteBuffer> bq = queueSendMap.computeIfAbsent(sid, serverId -> new CircularBlockingQueue<>(SEND_CAPACITY));
+            // 把选票数据添加到queueSendMap中sid对应的队列
             addToSendQueue(bq, b);
+            // 如果没有建立连接就会去连接其他服务器
             connectOne(sid);
         }
     }
@@ -715,6 +742,7 @@ public class QuorumCnxManager {
      *  @return boolean success indication
      */
     synchronized boolean connectOne(long sid, MultipleAddresses electionAddr) {
+        // senderWorkerMap如果存在sid，表示已经建立好连接了
         if (senderWorkerMap.get(sid) != null) {
             LOG.debug("There is a connection already for server {}", sid);
             if (self.isMultiAddressEnabled() && electionAddr.size() > 1 && self.isMultiAddressReachabilityCheckEnabled()) {
@@ -729,6 +757,7 @@ public class QuorumCnxManager {
         // we are doing connection initiation always asynchronously, since it is possible that
         // the socket connection timeouts or the SSL handshake takes too long and don't want
         // to keep the rest of the connections to wait
+        // 开一个线程去连接其他服务器
         return initiateConnectionAsync(electionAddr, sid);
     }
 
@@ -760,6 +789,7 @@ public class QuorumCnxManager {
             if (lastCommittedView.containsKey(sid)) {
                 knownId = true;
                 LOG.debug("Server {} knows {} already, it is in the lastCommittedView", self.getId(), sid);
+                // 连接
                 if (connectOne(sid, lastCommittedView.get(sid).electionAddr)) {
                     return;
                 }
@@ -800,6 +830,8 @@ public class QuorumCnxManager {
     boolean haveDelivered() {
         // 如果queueSendMap中的某个队列为空，则返回true
         for (BlockingQueue<ByteBuffer> queue : queueSendMap.values()) {
+            // {2: quee{]}
+            // {3: quee[vote]}
             final int queueSize = queue.size();
             LOG.debug("Queue size: {}", queueSize);
             if (queueSize == 0) {
@@ -953,6 +985,7 @@ public class QuorumCnxManager {
                 }
 
                 CountDownLatch latch = new CountDownLatch(addresses.size());
+                // ListenerHandler是一个线程，当前节点的领导者选举端口，可以有多个，每个端口对应的一个ListenerHandler来负责处理数据
                 listenerHandlers = addresses.stream().map(address ->
                                 new ListenerHandler(address, self.shouldUsePortUnification(), self.isSslQuorum(), latch))
                         .collect(Collectors.toList());
@@ -1031,6 +1064,7 @@ public class QuorumCnxManager {
             public void run() {
                 try {
                     Thread.currentThread().setName("ListenerHandler-" + address);
+                    // 接收连接
                     acceptConnections();
                     try {
                         close();
@@ -1060,6 +1094,7 @@ public class QuorumCnxManager {
                 int numRetries = 0;
                 Socket client = null;
 
+                // 创建serverSocket，等待连接
                 while ((!shutdown) && (portBindMaxRetry == 0 || numRetries < portBindMaxRetry)) {
                     try {
                         serverSocket = createNewServerSocket();
@@ -1077,6 +1112,7 @@ public class QuorumCnxManager {
                                 if (quorumSaslAuthEnabled) {
                                     receiveConnectionAsync(client);
                                 } else {
+                                    // 接收到了一个Socket连接
                                     receiveConnection(client);
                                 }
                                 numRetries = 0;
@@ -1247,6 +1283,7 @@ public class QuorumCnxManager {
                  * message than that stored in lastMessage. To avoid sending
                  * stale message, we should send the message in the send queue.
                  */
+                // 线程启动的时候，如果lastMessageSent有值，则再发一次这个选票
                 BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
                 if (bq == null || isSendQueueEmpty(bq)) {
                     ByteBuffer b = lastMessageSent.get(sid);
@@ -1266,6 +1303,8 @@ public class QuorumCnxManager {
 
                     ByteBuffer b = null;
                     try {
+
+                        // 从队列中获取数据
                         BlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
                         if (bq != null) {
                             b = pollSendQueue(bq, 1000, TimeUnit.MILLISECONDS);
@@ -1274,8 +1313,10 @@ public class QuorumCnxManager {
                             break;
                         }
 
+                        // lastMessageSent用来记录最后一个发送的消息
                         if (b != null) {
                             lastMessageSent.put(sid, b);
+                            // 发送消息（选票）
                             send(b);
                         }
                     } catch (InterruptedException e) {
@@ -1390,6 +1431,7 @@ public class QuorumCnxManager {
                      */
                     final byte[] msgArray = new byte[length];
                     din.readFully(msgArray, 0, length);
+                    // 把接收到的数据，封装为Message，并把Message添加到recvQueue队列中
                     addToRecvQueue(new Message(ByteBuffer.wrap(msgArray), sid));
                 }
             } catch (Exception e) {

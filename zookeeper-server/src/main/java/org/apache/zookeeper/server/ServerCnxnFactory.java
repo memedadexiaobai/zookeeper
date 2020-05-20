@@ -51,6 +51,7 @@ public abstract class ServerCnxnFactory {
     /**
      * The buffer will cause the connection to be close when we do a send.
      */
+    // xxx
     static final ByteBuffer closeConn = ByteBuffer.allocate(0);
 
     // total number of connections accepted by the ZooKeeper server

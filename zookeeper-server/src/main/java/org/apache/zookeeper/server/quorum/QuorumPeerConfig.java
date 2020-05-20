@@ -76,7 +76,7 @@ public class QuorumPeerConfig {
     protected boolean sslQuorumReloadCertFiles = false;
     protected File dataDir;
     protected File dataLogDir;
-    protected String dynamicConfigFileStr = null;
+    protected String dynamicConfigFileStr = null;   // reconfig
     protected String configFileStr = null;
     protected int tickTime = ZooKeeperServer.DEFAULT_TICK_TIME;
     protected int maxClientCnxns = 60;

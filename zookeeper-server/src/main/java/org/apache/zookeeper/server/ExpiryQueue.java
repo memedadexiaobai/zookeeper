@@ -81,7 +81,8 @@ public class ExpiryQueue<E> {
      * @return time at which the element is now set to expire if
      *                 changed, or null if unchanged
      */
-    public Long update(E elem, int timeout) {
+    // SesessionImpl
+    public Long update(E elem, int timeout) {  // 30s
         // 之前保存的session的过期时间点
         Long prevExpiryTime = elemMap.get(elem);
         long now = Time.currentElapsedTime();
@@ -129,7 +130,7 @@ public class ExpiryQueue<E> {
      */
     public long getWaitTime() {
         long now = Time.currentElapsedTime();
-        // 下个过期时间
+        // 下个过期时间  xxxx .04s   02,,
         long expirationTime = nextExpirationTime.get();
         return now < expirationTime ? (expirationTime - now) : 0L;
     }
@@ -144,13 +145,15 @@ public class ExpiryQueue<E> {
      */
     public Set<E> poll() {
         long now = Time.currentElapsedTime();
-        long expirationTime = nextExpirationTime.get();
+        // 02s
+        long expirationTime = nextExpirationTime.get();   // <=now
         if (now < expirationTime) {
             return Collections.emptySet();
         }
 
         Set<E> set = null;
 
+        // 06
         long newExpirationTime = expirationTime + expirationInterval; // expirationInterval就是tickTime
 
         // 先设置下一个过期时间

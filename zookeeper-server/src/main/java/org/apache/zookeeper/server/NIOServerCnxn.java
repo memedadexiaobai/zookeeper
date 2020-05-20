@@ -333,6 +333,7 @@ public class NIOServerCnxn extends ServerCnxn {
                 // 读就绪，把数据读到incomingBuffer中，
                 int rc = sock.read(incomingBuffer); // 45 一开始读4个字节数据，也就是读数据包的长度
 
+                //
                 if (rc < 0) {
                     // 没有读到数据则报错
                     handleFailedRead();
@@ -379,6 +380,7 @@ public class NIOServerCnxn extends ServerCnxn {
             close(DisconnectReason.CANCELLED_KEY_EXCEPTION);
         } catch (CloseRequestException e) {
             // expecting close to log session closure
+            // 移除watcher,并关闭socket
             close();
         } catch (EndOfStreamException e) {
             LOG.warn("Unexpected exception", e);

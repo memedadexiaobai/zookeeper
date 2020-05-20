@@ -52,6 +52,7 @@ public abstract class UpgradeableSessionTracker implements SessionTracker {
     }
 
     public boolean isLocalSession(long sessionId) {
+        // 本地Session打开了，并且本地Session中存在该sessionId
         return localSessionTracker != null && localSessionTracker.isTrackingSession(sessionId);
     }
 

@@ -37,6 +37,8 @@ import org.slf4j.LoggerFactory;
  * the queue, and the queue retrieval operations obtain elements at the head of
  * the queue. If the queue is full, the head of the queue (the oldest element)
  * will be removed to make room for the newest element.
+ *
+ * 环行队列，如果队列满了，新元素会插入队尾，之前的对头元素会被挤出去
  */
 public class CircularBlockingQueue<E> implements BlockingQueue<E> {
 

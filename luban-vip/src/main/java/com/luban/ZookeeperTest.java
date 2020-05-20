@@ -16,18 +16,37 @@ public class ZookeeperTest {
         // 启动SendThread(socket, 初始化， 读写事件, 发送时), EventTrhead
         // outgoingqueue packet pendingqueue
 
-        ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181", 30 * 1000, new Watcher() {
+        ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181,127.0.0.1:2182,127.0.0.1:2183", 30 * 1000, new Watcher() {
             @Override
             public void process(WatchedEvent event) {
+
                 System.out.println(event.getType());
             }
         });
-        //
 
 
 
+
+
+        Stat stat = new Stat();
+//        zooKeeper.getData("/luban", new Watcher() {
+//            @Override
+//            public void process(WatchedEvent event) {
 //
-//        Stat stat = new Stat();
+//                System.out.println("213");
+//            }
+//        }, stat);
+
+        zooKeeper.addWatch("/luban", new Watcher() {
+            @Override
+            public void process(WatchedEvent event) {
+                System.out.println("PERSISTENT_RECURSIVE"+event);
+            }
+        }, AddWatchMode.PERSISTENT_RECURSIVE);
+
+        System.in.read();
+
+
 
 
 
@@ -48,12 +67,7 @@ public class ZookeeperTest {
 
         // set /luban123
 
-//        zooKeeper.getData("/luban123111", new Watcher() {
-//            @Override
-//            public void process(WatchedEvent event) {
-//                System.out.println("213");
-//            }
-//        }, stat);  // /qingq getData ---> outgoingqueue
+
 //
 //       zooKeeper.getChildren("/luban123", new Watcher() {
 //            @Override
@@ -93,8 +107,6 @@ public class ZookeeperTest {
 //        // stat用来承载节点的其他信息
 
 //
-
-
 
 
 //        System.out.println("123");
@@ -156,7 +168,7 @@ public class ZookeeperTest {
         zooKeeper.addWatch("/luban123", new Watcher() {
             @Override
             public void process(WatchedEvent event) {
-                System.out.println("PERSISTENT"+event);
+                System.out.println("PERSISTENT" + event);
             }
         }, AddWatchMode.PERSISTENT);  ///luban123/1213/123/123
 //

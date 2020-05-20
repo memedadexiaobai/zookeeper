@@ -427,9 +427,11 @@ public class Leader extends LearnerMaster {
      */
     static final int INFORMANDACTIVATE = 19;
 
-    // 负责记录正在进行两阶段提交的Proposal，key为zxid
+    // 负责记录正在进行两阶段提交的Proposal，key为zxid, 某个Proposal在发送给参与者之前，会记录在这个map中
     final ConcurrentMap<Long, Proposal> outstandingProposals = new ConcurrentHashMap<Long, Proposal>();
 
+    // toBeApplied队列是用来存储，某个Proposal可以commit了，但是暂时还未提交（Proposal添加到队列后，马上就会commit了）
+    // 在toBeApplied队列中的Proposal，就不会在outstandingProposals了
     private final ConcurrentLinkedQueue<Proposal> toBeApplied = new ConcurrentLinkedQueue<Proposal>();
 
     // VisibleForTesting
@@ -811,7 +813,7 @@ public class Leader extends LearnerMaster {
                     }
                     tickSkip = !tickSkip;
                 }
-                for (LearnerHandler f : getLearners()) {
+                for (LearnerHandler f : getLearners()) {  // Follower
                     f.ping();
                 }
             }
@@ -939,7 +941,8 @@ public class Leader extends LearnerMaster {
         // pending all wait for a quorum of old and new config, so it's not possible to get enough acks
         // for an operation without getting enough acks for preceding ops. But in the future if multiple
         // concurrent reconfigs are allowed, this can happen.
-        // 保证按顺序提交操作，
+
+        // 保证按顺序提交操作，先检查当前要提交的请求的前一个请求有没有提交
         if (outstandingProposals.containsKey(zxid - 1)) {
             return false;
         }
@@ -947,6 +950,7 @@ public class Leader extends LearnerMaster {
         // in order to be committed, a proposal must be accepted by a quorum.
         //
         // getting a quorum from all necessary configurations.
+        // 验证过半机制
         if (!p.hasAllQuorums()) {
             return false;
         }
@@ -963,6 +967,7 @@ public class Leader extends LearnerMaster {
         outstandingProposals.remove(zxid);
 
         if (p.request != null) {
+            // toBeApplied队列是用来存储，某个Proposal可以commit了，但是暂时还未提交（Proposal添加到队列后，马上就会commit了）
             toBeApplied.add(p);
         }
 
@@ -999,7 +1004,7 @@ public class Leader extends LearnerMaster {
             // 向Observer节点通知当前已经可以提交的提议，提议里包含请求信息
             inform(p);
         }
-        // Leader自己提交
+        // Leader自己提交,这里只是把request添加到committedRequests队列中，由CommitRequestProcessor来处理该请求
         zk.commitProcessor.commit(p.request);
         if (pendingSyncs.containsKey(zxid)) {
             for (LearnerSyncRequest r : pendingSyncs.remove(zxid)) {
@@ -1064,8 +1069,10 @@ public class Leader extends LearnerMaster {
             p.request.logLatency(ServerMetrics.getMetrics().ACK_LATENCY, Long.toString(sid));
         }
 
-        p.addAck(sid);
+        // 当前这个提议接收到的服务器发送过来的ack
+        p.addAck(sid);   // sid
 
+        // 提交
         boolean hasCommitted = tryToCommit(p, zxid, followerAddr);
 
         // If p is a reconfiguration, multiple other operations may be ready to be committed,
@@ -1122,6 +1129,7 @@ public class Leader extends LearnerMaster {
          * @see org.apache.zookeeper.server.RequestProcessor#processRequest(org.apache.zookeeper.server.Request)
          */
         public void processRequest(Request request) throws RequestProcessorException {
+            // 同步调用FinalRequestProcess,修改DataTree
             next.processRequest(request);
 
             // The only requests that should be on toBeApplied are write
@@ -1133,6 +1141,7 @@ public class Leader extends LearnerMaster {
                 Iterator<Proposal> iter = leader.toBeApplied.iterator();
                 if (iter.hasNext()) {
                     Proposal p = iter.next();
+
                     if (p.request != null && p.request.zxid == zxid) {
                         iter.remove();
                         return;
@@ -1296,10 +1305,11 @@ public class Leader extends LearnerMaster {
 
             LOG.debug("Proposing:: {}", request);
 
-            // 记录一下上次提议的zxid
+            // 记录一下最近一次提议的zxid
             lastProposed = p.packet.getZxid();
 
             // 负责记录正在进行两阶段提交的Proposal，key为zxid
+            // 在发送第一阶段提交之前会把当前提议记录在这个队列中
             outstandingProposals.put(lastProposed, p);
 
             // 把提议Packet发送给所有Follower
@@ -1349,6 +1359,8 @@ public class Leader extends LearnerMaster {
         // Queue up any outstanding requests enabling the receipt of
         // new requests
         if (lastProposed > lastSeenZxid) {
+
+            // toBeApplied队列是用来存储，某个Proposal可以commit了，但是暂时还未提交（Proposal添加到队列后，马上就会commit了）
             for (Proposal p : toBeApplied) {
                 if (p.packet.getZxid() <= lastSeenZxid) {
                     continue;
@@ -1361,6 +1373,9 @@ public class Leader extends LearnerMaster {
             }
             // Only participant need to get outstanding proposals
             if (handler.getLearnerType() == LearnerType.PARTICIPANT) {
+
+                // 负责记录正在进行两阶段提交的Proposal，key为zxid, 某个Proposal在发送给参与者之前，会记录在这个map中
+                // 在toBeApplied队列中的Proposal，就不会在outstandingProposals了
                 List<Long> zxids = new ArrayList<Long>(outstandingProposals.keySet());
                 Collections.sort(zxids);
                 for (Long zxid : zxids) {

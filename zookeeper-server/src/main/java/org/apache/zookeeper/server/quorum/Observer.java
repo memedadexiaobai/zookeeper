@@ -116,10 +116,13 @@ public class Observer extends Learner {
                 self.setLeaderAddressAndId(master.addr, master.getId());
                 self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
+                // 会和Leader同步数据，同步数据完了之后，会启动RequestProcessor线程，从而可以接收客户端数据
                 syncWithLeader(newLeaderZxid);
 
                 self.setZabState(QuorumPeer.ZabState.BROADCAST);
                 completedSync = true;
+
+                // 读取Leader发送过来的命令
                 QuorumPacket qp = new QuorumPacket();
                 while (this.isRunning() && nextLearnerMaster.get() == null) {
                     readPacket(qp);

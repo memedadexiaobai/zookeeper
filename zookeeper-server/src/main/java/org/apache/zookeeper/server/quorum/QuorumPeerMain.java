@@ -134,10 +134,11 @@ public class QuorumPeerMain {
             config.getPurgeInterval());
         purgeMgr.start();
 
-        //
         if (args.length == 1 && config.isDistributed()) {
+            // 以集群模式启动
             runFromConfig(config);
         } else {
+            // 以单机模式启动
             LOG.warn("Either no config or no quorum defined in config, running in standalone mode");
             // there is only server in the quorum -- run as standalone
             ZooKeeperServerMain.main(args);
@@ -165,6 +166,7 @@ public class QuorumPeerMain {
             ServerCnxnFactory cnxnFactory = null;
             ServerCnxnFactory secureCnxnFactory = null;
 
+            // 绑定客户端端口
             if (config.getClientPortAddress() != null) {
                 cnxnFactory = ServerCnxnFactory.createFactory();
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
@@ -180,7 +182,9 @@ public class QuorumPeerMain {
             quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
             quorumPeer.enableLocalSessionsUpgrading(config.isLocalSessionsUpgradingEnabled());
             //quorumPeer.setQuorumPeers(config.getAllMembers());
+            // 选举策略
             quorumPeer.setElectionType(config.getElectionAlg());
+            // 设置myid
             quorumPeer.setMyid(config.getServerId());
             quorumPeer.setTickTime(config.getTickTime());
             quorumPeer.setMinSessionTimeout(config.getMinSessionTimeout());
@@ -221,6 +225,7 @@ public class QuorumPeerMain {
                 quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
             }
             quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+            // 这个初始化并没有做什么事情
             quorumPeer.initialize();
 
             if (config.jvmPauseMonitorToRun) {
@@ -231,6 +236,7 @@ public class QuorumPeerMain {
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
 
+            // 等待quorumPeer线程执行结束
             quorumPeer.join();
         } catch (InterruptedException e) {
             // warn, but generally this is ok

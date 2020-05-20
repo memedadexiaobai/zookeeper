@@ -672,6 +672,7 @@ public class ZKDatabase {
         this.snapLog.close();
     }
 
+    // 把qv的信息存到/zookeeper/config中
     public synchronized void initConfigInZKDatabase(QuorumVerifier qv) {
         if (qv == null) {
             return; // only happens during tests

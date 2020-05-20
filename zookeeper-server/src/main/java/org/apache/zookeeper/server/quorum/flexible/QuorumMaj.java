@@ -34,11 +34,14 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  */
 public class QuorumMaj implements QuorumVerifier {
 
+    // 所有服务器节点
     private Map<Long, QuorumServer> allMembers = new HashMap<Long, QuorumServer>();
+    // 所有参与者节点
     private Map<Long, QuorumServer> votingMembers = new HashMap<Long, QuorumServer>();
+    // 所有观察者节点
     private Map<Long, QuorumServer> observingMembers = new HashMap<Long, QuorumServer>();
     private long version = 0;
-    private int half;
+    private int half;    // votingMembers / 2
 
     public int hashCode() {
         assert false : "hashCode not designed";

@@ -588,7 +588,6 @@ public class FinalRequestProcessor implements RequestProcessor {
             err = Code.MARSHALLINGERROR;
         }
 
-        //
         ReplyHeader hdr = new ReplyHeader(request.cxid, lastZxid, err.intValue());
 
         updateStats(request, lastOp, lastZxid);
