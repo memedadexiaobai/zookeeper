@@ -459,6 +459,7 @@ public class Learner {
         boa.writeRecord(li, "LearnerInfo");
         qp.setData(bsid.toByteArray());
 
+        // 发送给Leader
         writePacket(qp, true);
         // 读取leader的响应
         readPacket(qp);
@@ -496,7 +497,7 @@ public class Learner {
             QuorumPacket ackNewEpoch = new QuorumPacket(Leader.ACKEPOCH, lastLoggedZxid, epochBytes, null);
             writePacket(ackNewEpoch, true);
 
-            //
+            // 
             return ZxidUtils.makeZxid(newEpoch, 0);
         } else {
             if (newEpoch > self.getAcceptedEpoch()) {

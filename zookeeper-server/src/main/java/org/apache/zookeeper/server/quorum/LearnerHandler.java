@@ -634,6 +634,7 @@ public class LearnerHandler extends ZooKeeperThread {
             // 待同步的数据是先发在队列中的，这里就会开启一个线程去发送这些数据
             // 并且开启这个线程后，后续流程中想要发送给Learner的数据，只要添加到queuedPackets队列中即可
             // 这里是异步
+            // 上面先发送快照，这里再发送日志
             startSendingPackets();
 
 
@@ -953,6 +954,7 @@ public class LearnerHandler extends ZooKeeperThread {
                 Iterator<Proposal> txnLogItr = db.getProposalsFromTxnLog(peerLastZxid, sizeLimit);
                 if (txnLogItr.hasNext()) {
                     LOG.info("Use txnlog and committedLog for peer sid: {}", getSid());
+                    // 从txnLogItr中把（peerLastZxid， minCommittedLog]的Proposal添加到queuedPackets中
                     currentZxid = queueCommittedProposals(txnLogItr, peerLastZxid, minCommittedLog, maxCommittedLog);
 
                     if (currentZxid < minCommittedLog) {
@@ -965,13 +967,18 @@ public class LearnerHandler extends ZooKeeperThread {
                         // to sending a snapshot.
                         queuedPackets.clear();
                         needOpPacket = true;
+
+                        // 进行快照同步
                     } else {
                         LOG.debug("Queueing committedLog 0x{}", Long.toHexString(currentZxid));
                         Iterator<Proposal> committedLogItr = db.getCommittedLog().iterator();
+
+                        // 再从committedLogItr把（currentZxid， null]的Proposal添加到queuedPackets中
                         currentZxid = queueCommittedProposals(committedLogItr, currentZxid, null, maxCommittedLog);
                         needSnap = false;
                     }
                 }
+
                 // closing the resources
                 if (txnLogItr instanceof TxnLogProposalIterator) {
                     TxnLogProposalIterator txnProposalItr = (TxnLogProposalIterator) txnLogItr;
@@ -995,7 +1002,8 @@ public class LearnerHandler extends ZooKeeperThread {
             }
 
             LOG.debug("Start forwarding 0x{} for peer sid: {}", Long.toHexString(currentZxid), getSid());
-            // 把leader上的toBeApplied和outstandingProposals同步给Follower
+
+            // 把leader上的toBeApplied和outstandingProposals中的大于lastSeenZxid的Proposals同步给Follower
             leaderLastZxid = learnerMaster.startForwarding(this, currentZxid);
         } finally {
             rl.unlock();
@@ -1024,8 +1032,6 @@ public class LearnerHandler extends ZooKeeperThread {
      */
 
     // 把itr中的(peerLaxtZxid, maxZxid]范围内的Proposal添加到packet queue中
-    // peerLastZxid是Follower节点上的最大zxid
-    // lastCommittedZxid可以不管，learner那边没用到
     protected long queueCommittedProposals(Iterator<Proposal> itr, long peerLastZxid, Long maxZxid, Long lastCommittedZxid) {
         boolean isPeerNewEpochZxid = (peerLastZxid & 0xffffffffL) == 0;
         long queuedZxid = peerLastZxid;
