@@ -521,7 +521,8 @@ public class Leader extends LearnerMaster {
                 Socket socket = null;
                 boolean error = false;
                 try {
-                    socket = serverSocket.accept();
+                    // Follower
+                    socket = serverSocket.accept();  //
 
                     // start with the initLimit, once the ack is processed
                     // in LearnerHandler switch to the syncLimit
@@ -691,7 +692,7 @@ public class Leader extends LearnerMaster {
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
 
-            // 当前leader处于同步数据节点
+            // 当前leader处于同步数据状态
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
@@ -1384,6 +1385,7 @@ public class Leader extends LearnerMaster {
                         continue;
                     }
                     handler.queuePacket(outstandingProposals.get(zxid).packet);
+
                 }
             }
         }
@@ -1464,7 +1466,7 @@ public class Leader extends LearnerMaster {
 
     @Override
     // 拿某一个lastAcceptedEpoch来和leader的epoch来进行pk
-    // lastAcceptedEpoch可以是follower节点传过来的epoch
+    // lastAcceptedEpoch是follower节点传过来的epoch
     public long getEpochToPropose(long sid, long lastAcceptedEpoch) throws InterruptedException, IOException {
         synchronized (connectingFollowers) {
             if (!waitingForNewEpoch) {
@@ -1488,7 +1490,7 @@ public class Leader extends LearnerMaster {
                 waitingForNewEpoch = false;
                 // 设置leader的acceptedEpoch，写入文件，表示本届领导的epoch
                 self.setAcceptedEpoch(epoch);
-                connectingFollowers.notifyAll();
+                connectingFollowers.notifyAll(); //
             } else {
                 // 如果没有过半，则调用当前方法的线程阻塞（需要等超过一半的机器都统一了epoch就会notifyAll，代码就在上面）
                 long start = Time.currentElapsedTime();

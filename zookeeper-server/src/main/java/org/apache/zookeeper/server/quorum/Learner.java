@@ -330,7 +330,7 @@ public class Learner {
         public void run() {
             try {
                 Thread.currentThread().setName("LeaderConnector-" + address);
-                Socket sock = connectToLeader();
+                Socket sock = connectToLeader();  //
 
                 if (sock != null && sock.isConnected()) {
                     if (socket.compareAndSet(null, sock)) {
@@ -444,10 +444,12 @@ public class Learner {
          * Send follower info, including last zxid and sid
          */
         // DataBase中的最新zxid
-        long lastLoggedZxid = self.getLastLoggedZxid();
+        long lastLoggedZxid = self.getLastLoggedZxid(); //
+
+
         QuorumPacket qp = new QuorumPacket();
         qp.setType(pktType);
-        // 从acceptedEpoch文件中拿到epoch
+        // 从acceptedEpoch文件中拿到epoch  // 上一届  3,4,5,6,7，
         qp.setZxid(ZxidUtils.makeZxid(self.getAcceptedEpoch(), 0));
 
         /*
@@ -461,7 +463,7 @@ public class Learner {
 
         // 发送给Leader
         writePacket(qp, true);
-        // 读取leader的响应
+        // 阻塞读取leader的响应  LeaderInfo
         readPacket(qp);
 
         // 接收到leader发送过来的新epoch
@@ -621,7 +623,7 @@ public class Learner {
 
                     // 添加到packetsNotCommitted
                     // 还没有提交的packets
-                    packetsNotCommitted.add(pif);
+                    packetsNotCommitted.add(pif); //
                     break;
                 case Leader.COMMIT:
                 case Leader.COMMITANDACTIVATE:
@@ -744,6 +746,7 @@ public class Learner {
         sock.setSoTimeout(self.tickTime * self.syncLimit);
         self.setSyncMode(QuorumPeer.SyncMode.NONE);
         // 启动Follower或Observer
+        // ReqeustProcessor
         zk.startup();
         /*
          * Update the election vote here to ensure that all members of the

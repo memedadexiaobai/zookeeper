@@ -259,6 +259,7 @@ public class LearnerHandler extends ZooKeeperThread {
      */
     private LearnerSyncThrottler syncThrottler = null;
 
+    //
     LearnerHandler(Socket sock, BufferedInputStream bufferedInput, LearnerMaster learnerMaster) throws IOException {
         super("LearnerHandler-" + sock.getRemoteSocketAddress());
         this.sock = sock;
@@ -465,7 +466,7 @@ public class LearnerHandler extends ZooKeeperThread {
 
             // 从socket中读取数据（Follower节点发送过来的数据）
             QuorumPacket qp = new QuorumPacket();
-            ia.readRecord(qp, "packet");
+            ia.readRecord(qp, "packet"); // 阻塞
 
 
             messageTracker.trackReceived(qp.getType());
@@ -527,7 +528,7 @@ public class LearnerHandler extends ZooKeeperThread {
             long peerLastZxid;
             StateSummary ss = null;
 
-            long zxid = qp.getZxid();
+            long zxid = qp.getZxid();  // follower上的最大的zxid
             // 如果Learner的epoch大于或等于Leader的epoch，则Leader的epoch在Learner的基础上加1
             // 当前learnerHandler线程已经接收到了对应Learner节点上的epoch，等待其他learnerHandler线程接收到对应Learner节点上的epoch信息
             // 等待leader统一epoch
@@ -535,6 +536,7 @@ public class LearnerHandler extends ZooKeeperThread {
 
             // 基于新的epoch，生成该epoch下的第一个zxid
             long newLeaderZxid = ZxidUtils.makeZxid(newEpoch, 0);
+
 
             if (this.getVersion() < 0x10000) {
                 // we are going to have to extrapolate the epoch information
@@ -605,7 +607,7 @@ public class LearnerHandler extends ZooKeeperThread {
                         syncThrottler.getSyncInProgress(),
                         exemptFromThrottle ? "exempt" : "not exempt");
                     // Dump data to peer
-                    learnerMaster.getZKDatabase().serializeSnapshot(oa);
+                    learnerMaster.getZKDatabase().serializeSnapshot(oa);   //
                     oa.writeString("BenWasHere", "signature");
                     bufferedOutput.flush();
                 } finally {
@@ -635,7 +637,7 @@ public class LearnerHandler extends ZooKeeperThread {
             // 并且开启这个线程后，后续流程中想要发送给Learner的数据，只要添加到queuedPackets队列中即可
             // 这里是异步
             // 上面先发送快照，这里再发送日志
-            startSendingPackets();
+            startSendingPackets();  //
 
 
             /*
@@ -968,7 +970,7 @@ public class LearnerHandler extends ZooKeeperThread {
                         queuedPackets.clear();
                         needOpPacket = true;
 
-                        // 进行快照同步
+                        // 进行快照同步   true
                     } else {
                         LOG.debug("Queueing committedLog 0x{}", Long.toHexString(currentZxid));
                         Iterator<Proposal> committedLogItr = db.getCommittedLog().iterator();
@@ -1118,7 +1120,7 @@ public class LearnerHandler extends ZooKeeperThread {
 
             // Since this is already a committed proposal, we need to follow
             // it by a commit packet
-            queuePacket(propose.packet);
+            queuePacket(propose.packet);  // 请求
             queueOpPacket(Leader.COMMIT, packetZxid);
             queuedZxid = packetZxid;
 
