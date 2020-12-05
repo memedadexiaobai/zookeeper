@@ -1549,7 +1549,6 @@ public class ZooKeeper implements AutoCloseable {
 
     // default hostprovider
     private static HostProvider createDefaultHostProvider(String connectString) {
-
         return new StaticHostProvider(new ConnectStringParser(connectString).getServerAddresses());
     }
 
@@ -3452,8 +3451,9 @@ public class ZooKeeper implements AutoCloseable {
     }
 
     private ClientCnxnSocket getClientCnxnSocket() throws IOException {
+        //zookeeper.clientCnxnSocket 这个配置被废弃了
         String clientCnxnSocketName = getClientConfig().getProperty(ZKClientConfig.ZOOKEEPER_CLIENT_CNXN_SOCKET);
-        if (clientCnxnSocketName == null) {
+        if (clientCnxnSocketName == null) { //默认NIO
             clientCnxnSocketName = ClientCnxnSocketNIO.class.getName();
         }
         try {

@@ -73,7 +73,6 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         if (sockKey.isReadable()) {
             // 把socket中的数据读入到incomingBuffer中
             // 一开始只读了前4个字节的数据（lenBuffer）
-            //
             int rc = sock.read(incomingBuffer);
 
             if (rc < 0) {
@@ -275,7 +274,10 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
         SocketChannel sock;
         sock = SocketChannel.open();
         sock.configureBlocking(false);
+        //方法的作用是启用/禁用具有指定逗留时 间(以秒为单位)的 SO LINGER。
+        //最大超时值是特定于平台的。 该设置仅影响套接字关闭。 参数 on 的含义 为是否逗留，参数 linger 的含义为逗留时间，单位为秒 。
         sock.socket().setSoLinger(false, -1);
+        //作用是启用/禁用 TCP NODELAY (启用/ 禁用 Nagle 算法) 。 参数为 true，表示启用 TCP_NODELAY ;参数为 false，表示禁用 。
         sock.socket().setTcpNoDelay(true);
         return sock;
     }

@@ -74,13 +74,14 @@ public class ConfigUtils {
      * @param s server config, server:port
      */
     public static String[] getHostAndPort(String s) throws ConfigException {
+        //ipv6的判断
         if (s.startsWith("[")) {
             int i = s.indexOf("]");
             if (i < 0) {
                 throw new ConfigException(s + " starts with '[' but has no matching ']:'");
             }
             if (i + 2 == s.length()) {
-                throw new ConfigException(s + " doesn't have a port after colon");
+                throw new ConfigException(s + " doesn't have a port after colon(冒号)");
             }
             if (i + 2 < s.length()) {
                 String[] sa = s.substring(i + 2).split(":");

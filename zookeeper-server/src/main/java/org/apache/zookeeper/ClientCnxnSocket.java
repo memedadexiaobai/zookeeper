@@ -146,7 +146,7 @@ abstract class ClientCnxnSocket {
         ConnectResponse conRsp = new ConnectResponse();
         conRsp.deserialize(bbia, "connect");
 
-        // read "is read-only" flag
+        // read "is read-only" flag  读“是只读”标志
         boolean isRO = false;
         try {
             isRO = bbia.readBool("readOnly");

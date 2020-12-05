@@ -59,6 +59,7 @@ public final class StaticHostProvider implements HostProvider {
 
     /**
      * The following fields are used to migrate clients during reconfiguration
+     * 以下字段用于在重新配置期间迁移客户端
      */
     private boolean reconfigMode = false;
 

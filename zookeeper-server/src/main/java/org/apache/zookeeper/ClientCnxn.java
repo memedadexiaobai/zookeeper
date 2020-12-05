@@ -428,15 +428,16 @@ public class ClientCnxn {
         long sessionId,
         byte[] sessionPasswd,
         boolean canBeReadOnly) {
+
         this.zooKeeper = zooKeeper;
         this.watcher = watcher;
-        this.sessionId = sessionId;
+        this.sessionId = sessionId; //从0开始
         this.sessionPasswd = sessionPasswd;
         this.sessionTimeout = sessionTimeout;
         this.hostProvider = hostProvider;
         this.chrootPath = chrootPath;
 
-        //
+        //连接超时 = session超时时间 / 主机个数
         connectTimeout = sessionTimeout / hostProvider.size(); // 3
         readTimeout = sessionTimeout * 2 / 3;
         readOnly = canBeReadOnly;
@@ -445,6 +446,7 @@ public class ClientCnxn {
         sendThread = new SendThread(clientCnxnSocket);
         eventThread = new EventThread();
         this.clientConfig = zooKeeper.getClientConfig();
+        //初始化请求超时时间
         initRequestTimeout();
     }
 
@@ -1045,8 +1047,9 @@ public class ClientCnxn {
             // Only send if there's a pending watch
             // TODO: here we have the only remaining use of zooKeeper in
             // this class. It's to be eliminated!
+            //如果不允许自动重置watch
             if (!clientConfig.getBoolean(ZKClientConfig.DISABLE_AUTO_WATCH_RESET)) {
-                List<String> dataWatches = zooKeeper.getDataWatches();
+                List<String> dataWatches = zooKeeper.getDataWatches(); //获取的均为key 即path
                 List<String> existWatches = zooKeeper.getExistWatches();
                 List<String> childWatches = zooKeeper.getChildWatches();
                 List<String> persistentWatches = zooKeeper.getPersistentWatches();
@@ -1219,10 +1222,9 @@ public class ClientCnxn {
         // SendTrhead
         @Override
         public void run() {
-            //
-            clientCnxnSocket.introduce(this, sessionId, outgoingQueue);
+            clientCnxnSocket.introduce(this, sessionId, outgoingQueue);  //LinkedBlockingDeque
             // 线程在一开始运行时，把now、lastSend、lastHeard都更新为当前时间
-            clientCnxnSocket.updateNow();   // nod
+            clientCnxnSocket.updateNow();   // now
             clientCnxnSocket.updateLastSendAndHeard();
             int to;
             long lastPingRwServer = Time.currentElapsedTime();
@@ -1230,7 +1232,7 @@ public class ClientCnxn {
             InetSocketAddress serverAddress = null;
 
 
-            // 只要不是被close了，或者向服务端验证失败了就是Alive，就算是还没有建立连接也是Alive
+            // 只要不是被close了，或者向服务端验证失败了就是Alive，就算是还没有建立连接也是Alive  线程刚创建时 状态为CONNECTING
             while (state.isAlive()) {
                 try {
                     // 判断的是sockKey != null则表示已经连接了
@@ -1246,8 +1248,8 @@ public class ClientCnxn {
                         } else {
                             serverAddress = hostProvider.next(1000);
                         }
-                        // 简历连接，包括两步
-                        // 1. 简历socket连接
+                        // 建立连接，包括两步
+                        // 1. 建立socket连接
                         // 2. 连接初始化，primeConnection()
                         // 3. 这里没有发送任何数据，只是可能把socket连接建立好了   nio
                         startConnect(serverAddress);
@@ -1316,7 +1318,7 @@ public class ClientCnxn {
 
                         // clientCnxnSocket.getIdleSend()表示上一次发送数据的时间
                         int timeToNextPing = readTimeout / 2
-                                             - clientCnxnSocket.getIdleSend()
+                                             - clientCnxnSocket.getIdleSend()  //上次发送数据的之间到现在有多久
                                              - ((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
                         // 10秒一定会发送一个ping
@@ -1517,7 +1519,7 @@ public class ClientCnxn {
                 (isRO ? " (READ-ONLY mode)" : ""));
 
             KeeperState eventState = (isRO) ? KeeperState.ConnectedReadOnly : KeeperState.SyncConnected;
-            // 连接正式建立后，发出一个事件，类型为None,状态为eventState
+            // 连接正式建立后，发出一个事件，类型为None,状态为eventState  放到 waitingEvents 队列中
             eventThread.queueEvent(new WatchedEvent(Watcher.Event.EventType.None, eventState, null));
         }
 

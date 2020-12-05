@@ -68,6 +68,7 @@ public final class ConnectStringParser {
         }
 
         List<String> hostsList = split(connectString, ",");
+        //127.0.0.1:2181
         for (String host : hostsList) {
             int port = DEFAULT_PORT;
             try {

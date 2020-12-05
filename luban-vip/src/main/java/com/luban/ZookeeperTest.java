@@ -19,7 +19,6 @@ public class ZookeeperTest {
         ZooKeeper zooKeeper = new ZooKeeper("127.0.0.1:2181,127.0.0.1:2182,127.0.0.1:2183", 30 * 1000, new Watcher() {
             @Override
             public void process(WatchedEvent event) {
-
                 System.out.println(event.getType());
             }
         });
@@ -32,7 +31,6 @@ public class ZookeeperTest {
 //        zooKeeper.getData("/luban", new Watcher() {
 //            @Override
 //            public void process(WatchedEvent event) {
-//
 //                System.out.println("213");
 //            }
 //        }, stat);

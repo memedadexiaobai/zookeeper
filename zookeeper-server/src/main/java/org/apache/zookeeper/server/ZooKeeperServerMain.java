@@ -149,7 +149,8 @@ public class ZooKeeperServerMain {
             }
 
             //
-            final ZooKeeperServer zkServer = new ZooKeeperServer(jvmPauseMonitor, txnLog, config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, config.listenBacklog, null, config.initialConfig);
+            final ZooKeeperServer zkServer = new ZooKeeperServer(jvmPauseMonitor, txnLog,
+                    config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, config.listenBacklog, null, config.initialConfig);
             txnLog.setServerStats(zkServer.serverStats());
 
             // Registers shutdown handler which will be used to know the
