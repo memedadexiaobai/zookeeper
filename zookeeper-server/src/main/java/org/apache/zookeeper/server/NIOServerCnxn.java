@@ -176,21 +176,23 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /** Read the request payload (everything following the length prefix) */
     private void readPayload() throws IOException, InterruptedException, ClientCnxnLimitException {
-        if (incomingBuffer.remaining() != 0) { // have we read length bytes?
+        if (incomingBuffer.remaining() != 0) { // have we read length bytes? 应该把incomingBuffer中数据读取完，这里还没读完 再读取下
             int rc = sock.read(incomingBuffer); // sock is non-blocking, so ok
             if (rc < 0) {
                 handleFailedRead();
             }
         }
 
-        if (incomingBuffer.remaining() == 0) { // have we read length bytes?
+        if (incomingBuffer.remaining() == 0) { // have we read length bytes? 全部读取完了
             incomingBuffer.flip();
+            // 这里是总共收到的字节数 flip切换模式，4 + incomingBuffer.remaining() 就是本轮读取到的所有的字节数
             packetReceived(4 + incomingBuffer.remaining());
-            if (!initialized) {
-                readConnectRequest();
+            if (!initialized) {//未初始化请求
+                readConnectRequest();//连接请求处理
             } else {
-                readRequest();
+                readRequest();//普通请求
             }
+            // 恢复下incomingBuffer 处理下一批数据
             lenBuffer.clear();
             incomingBuffer = lenBuffer;
         }
@@ -322,6 +324,49 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /**
      * Handles read/write IO on connection.
+     *
+     * Zookeeper 是 TCP 长连接（不是短连接，不是 HTTP）
+     *  一个客户端 只建立一条 TCP 连接，全程复用
+     *  连接建立时：只触发一次 OP_ACCEPT
+     *  连接建立后：永远只触发 OP_READ / OP_WRITE
+     *  直到客户端断开，才会关闭连接
+     *
+     * 为什么必须长连接？
+     *  Session 会话机制（ZK 核心）
+     *      会话 ID 绑定在 TCP 连接上
+     *      心跳（ping）通过这条连接发送
+     *      断开 = 会话失效
+     *  高并发请求复用一条连接
+     *      create /get/set /delete 都走这一条连接
+     *  心跳保活
+     *      客户端每隔 tickTime 发送心跳
+     *      服务端感知客户端存活
+     *
+     * accept 只在【第一次建立连接】时触发一次！流程：
+     *  客户端 connect → 服务端 TCP 握手
+     *  服务端 OP_ACCEPT 事件触发
+     *  AcceptThread 处理 accept()
+     *  生成新的 SocketChannel
+     *  注册到 SelectorThread（监听 OP_READ）
+     *  此后永远不会再触发 OP_ACCEPT（同一个连接不会再次 accept）
+     * accept = 建立连接的那一瞬间，仅此一次！
+     *
+     * 连接建立成功后：
+     *  不再有 accept
+     *  不再有 connect
+     *  只会出现两种事件：
+     *      OP_READ：客户端发请求来了
+     *      OP_WRITE：服务端要回包给客户端
+     * Zookeeper 交互使用自定义的二进制协议，格式非常简单：
+     * [ len ][ request payload ]
+     * len：int（4 字节）
+     * payload：ZK 的 Request 二进制序列化
+     * [ len ][ response payload ]
+     *
+     * 客户端断开
+     * → 发送 FIN→ 服务端内核接收→ 标记 socket 可读→ Selector 唤醒 → OP_READ→ 进入 read () 方法→ read () 返回 -1→ ZK 知道：客户端断开了→ 关闭连接、取消 SelectionKey、清理会话
+     * ① 正常断开（客户端 close）→ OP_READ→ read () = -1→ 正常关闭
+     * ② 异常断开（断网 / 崩溃）→ 内核等待超时→ 仍然触发 OP_READ→ read () = -1→ 同样关闭
      */
     void doIO(SelectionKey k) throws InterruptedException {
         try {
@@ -331,6 +376,10 @@ public class NIOServerCnxn extends ServerCnxn {
                 return;
             }
             if (k.isReadable()) {
+                // rc=本次读取的字节数 -1代表客户端断开连接
+                // rc > 0 读到了有效数据= 读到了 rc 个字节= 正常情况
+                // rc == 0 没读到数据，但连接还活着= 缓冲区空了= 不是错误，只是暂时没数据
+                // rc < 0（固定返回 -1） 客户端已经断开连接（EOF）= 流结束= TCP 收到 FIN= 客户端关闭连接= ZK 必须 close () 这个连接
                 int rc = sock.read(incomingBuffer);
                 if (rc < 0) {
                     try {
@@ -343,10 +392,19 @@ public class NIOServerCnxn extends ServerCnxn {
                         return;
                     }
                 }
-                if (incomingBuffer.remaining() == 0) {
+                // 返回的的值是 limit - position
+                // ==0 时候说明走到头了 读满了
+                if (incomingBuffer.remaining() == 0) {//缓冲区满了
                     boolean isPayload;
+                    /**
+                     * lenBuffer:
+                     *  初始化：position=1 limit=4 capacity=4
+                     *  新请求都从读取
+                     *  incomingBuffer 在读取时候会发生变化，这里直接用==比较lenBuffer是否是同一个对象，来判断是否是新一个请求的开始
+                      */
                     if (incomingBuffer == lenBuffer) { // start of next request
                         incomingBuffer.flip();
+                        // 如果是一些命令的话 返回false，否则是true
                         isPayload = readLength(k);
                         incomingBuffer.clear();
                     } else {
@@ -409,6 +467,7 @@ public class NIOServerCnxn extends ServerCnxn {
         return !throttled.get();
     }
 
+    // throttled：节流
     private final AtomicBoolean throttled = new AtomicBoolean(false);
 
     // Throttle acceptance of new requests. If this entailed a state change,
@@ -485,21 +544,51 @@ public class NIOServerCnxn extends ServerCnxn {
     private boolean checkFourLetterWord(final SelectionKey k, final int len) throws IOException {
         // We take advantage of the limited size of the length to look
         // for cmds. They are all 4-bytes which fits inside of an int
+        // zk cmd都是4个字节的长度，这里通过 ByteBuffer的wrap方法，生成 int -> cmd 的映射，通过 int 来判断是否是支持的命令
         if (!FourLetterCommands.isKnown(len)) {
             return false;
         }
 
+        //拿到具体的命令
         String cmd = FourLetterCommands.getCommandString(len);
+        // 记录收到的包
         packetReceived(4);
 
-        /** cancel the selection key to remove the socket handling
-         * from selector. This is to prevent netcat problem wherein
-         * netcat immediately closes the sending side after sending the
-         * commands and still keeps the receiving channel open.
+        /** cancel the selection key to remove the socket handling from selector.
+         *  This is to prevent netcat problem wherein netcat immediately closes the sending side
+         *  after sending the  commands and still keeps the receiving channel open.
          * The idea is to remove the selectionkey from the selector
          * so that the selector does not notice the closed read on the
          * socket channel and keep the socket alive to write the data to
          * and makes sure to close the socket after its done writing the data
+         *
+         * netcat（nc）连接 ZK 时，比如：echo stat | nc localhost 2181
+         * netcat 的行为是这样的：
+         *  发送 stat 命令
+         *  立刻关闭发送方向（shut down output）
+         *  但 Socket 连接还没有完全关闭（还处于 CLOSE_WAIT）
+         * 对 ZK 来说会发生什么灾难？
+         *  ZK 读到 stat 命令
+         *  准备回复
+         *  但此时 客户端发送端已关闭
+         *  Selector 会不断触发 OP_READ 事件
+         *  ZK 不断读，但每次都读到 -1（EOF）
+         *  死循环！CPU 100%！
+         * 这就是 netcat problem！
+         *
+         * k.cancel() 做了什么？
+         * 把这个 SelectionKey 从 Selector 中注销！→ Selector 不再监听这个连接的任何事件（OP_READ / OP_WRITE）→ 不会再触发空读循环→ 连接安全关闭
+         *
+         * 作用：强制注销 SelectionKey，避免 netcat 类客户端 “半关闭” 连接导致的空轮询、死循环、CPU 100%
+         * 一句话总结：
+         * netcat 问题 = 发完数据立刻关发送端，但不关连接 → ZK 无限触发读事件k.cancel () = 直接把这个连接从 Selector 里踢出去 → 彻底解决死循环
+         *
+         * 哪些客户端会触发这个问题？
+         *  netcat (nc)
+         *  curl
+         *  简单脚本客户端
+         *  异常断开的客户端
+         *  4 字母命令（stat/ruok/conf）
          */
         if (k != null) {
             try {
@@ -511,7 +600,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
         final PrintWriter pwriter = new PrintWriter(new BufferedWriter(new SendBufferWriter()));
 
-        // ZOOKEEPER-2693: don't execute 4lw if it's not enabled.
+        // ZOOKEEPER-2693: don't execute 4lw if it's not enabled. 里边加了个白名单，哪些命令允许执行，比如srvr 这是zk需要的
         if (!FourLetterCommands.isEnabled(cmd)) {
             LOG.debug("Command {} is not executed because it is not in the whitelist.", cmd);
             NopCommand nopCmd = new NopCommand(
@@ -524,7 +613,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
         LOG.info("Processing {} command from {}", cmd, sock.socket().getRemoteSocketAddress());
 
-        if (len == FourLetterCommands.setTraceMaskCmd) {
+        if (len == FourLetterCommands.setTraceMaskCmd) {// stmk命令
             incomingBuffer = ByteBuffer.allocate(8);
             int rc = sock.read(incomingBuffer);
             if (rc < 0) {

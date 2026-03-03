@@ -69,6 +69,7 @@ public class ConfigUtils {
     /**
      * Gets host and port by splitting server config
      * with support for IPv6 literals
+     * [地址]:端口
      * @return String[] first element being the
      *  IP address and the next being the port
      * @param s server config, server:port
@@ -79,17 +80,28 @@ public class ConfigUtils {
             if (i < 0) {
                 throw new ConfigException(s + " starts with '[' but has no matching ']:'");
             }
-            if (i + 2 == s.length()) {
+            if (i + 2 == s.length()) { // ] 后只有一个字符（即 :），无端口 → 非法
+                // 比如 [::1]: → i+2 = 长度（] 索引是 4，长度是 6 → 4+2=6）→ 抛异常（无端口）；
+                // 比如 [::1]:2181 → i+2=5 < 长度7 → 合法；
                 throw new ConfigException(s + " doesn't have a port after colon");
             }
             if (i + 2 < s.length()) {
+                /**
+                 * 示例解析：输入 [::1]:2181:8080
+                 *   i 是 ] 的索引（4），i+2=6，截取 2181:8080 → 拆成 ["2181", "8080"]；
+                 *   新建数组 nsa 长度 = 3；
+                 *   nsa[0] = "::1"（[] 内的 IPv6 地址）；
+                 *   nsa[1] = "2181"，nsa[2] = "8080"；
+                 *   返回 ["::1", "2181", "8080"]；
+                 */
                 String[] sa = s.substring(i + 2).split(":");
                 String[] nsa = new String[sa.length + 1];
                 nsa[0] = s.substring(1, i);
                 System.arraycopy(sa, 0, nsa, 1, sa.length);
                 return nsa;
             }
-            return new String[]{s.replaceAll("\\[|\\]", "")};
+            // 边界情况处理（无端口时返回纯 IPv6 地址）
+            return new String[]{s.replaceAll("\\[|\\]", "")}; // 去掉 []，返回纯 IPv6 地址
         } else {
             return s.split(":");
         }

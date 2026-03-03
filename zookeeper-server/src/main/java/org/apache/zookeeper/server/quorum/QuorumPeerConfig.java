@@ -78,6 +78,7 @@ public class QuorumPeerConfig {
     protected File dataDir;
     protected File dataLogDir;
     protected String dynamicConfigFileStr = null;
+    // 配置文件的路径
     protected String configFileStr = null;
     protected int tickTime = ZooKeeperServer.DEFAULT_TICK_TIME;
     protected int maxClientCnxns = 60;
@@ -106,6 +107,7 @@ public class QuorumPeerConfig {
     protected int purgeInterval = 0;
     protected boolean syncEnabled = true;
 
+    //这里存的是配置的文件的所有内容
     protected String initialConfig;
 
     protected LearnerType peerType = LearnerType.PARTICIPANT;
@@ -174,10 +176,12 @@ public class QuorumPeerConfig {
         LOG.info("Reading configuration from: " + path);
 
         try {
-            File configFile = (new VerifyingFileFactory.Builder(LOG)
-                .warnForRelativePath()
-                .failForNonExistingPath()
-                .build()).create(path);
+            File configFile = (new VerifyingFileFactory
+                    .Builder(LOG)
+                    .warnForRelativePath()
+                    .failForNonExistingPath()
+                .build())
+                    .create(path);
 
             Properties cfg = new Properties();
             FileInputStream in = new FileInputStream(configFile);
@@ -471,6 +475,7 @@ public class QuorumPeerConfig {
             throw new IllegalArgumentException("tickTime is not set");
         }
 
+        //从这里可以看出默认情况下，session的超时时间在 tickTime 的 2-20倍之间
         minSessionTimeout = minSessionTimeout == -1 ? tickTime * 2 : minSessionTimeout;
         maxSessionTimeout = maxSessionTimeout == -1 ? tickTime * 20 : maxSessionTimeout;
 
@@ -661,6 +666,7 @@ public class QuorumPeerConfig {
 
     void setupQuorumPeerConfig(Properties prop, boolean configBackwardCompatibilityMode) throws IOException, ConfigException {
         quorumVerifier = parseDynamicConfig(prop, electionAlg, true, configBackwardCompatibilityMode);
+        // 设置 serverId
         setupMyId();
         setupClientPort();
         setupPeerType();
@@ -675,9 +681,10 @@ public class QuorumPeerConfig {
      * @throws ConfigException
      */
     public static QuorumVerifier parseDynamicConfig(Properties dynamicConfigProp, int eAlg, boolean warnings, boolean configBackwardCompatibilityMode) throws IOException, ConfigException {
-        boolean isHierarchical = false;
+        boolean isHierarchical = false; // Hierarchical:分层的
         for (Entry<Object, Object> entry : dynamicConfigProp.entrySet()) {
             String key = entry.getKey().toString().trim();
+            // group 管 “哪些节点能选举”，weight 管 “每个节点的选举票数”，都是 ZK 集群动态化管理的核心配置
             if (key.startsWith("group") || key.startsWith("weight")) {
                 isHierarchical = true;
             } else if (!configBackwardCompatibilityMode && !key.startsWith("server.") && !key.equals("version")) {
@@ -693,7 +700,7 @@ public class QuorumPeerConfig {
         if (numParticipators == 0) {
             if (!standaloneEnabled) {
                 throw new IllegalArgumentException("standaloneEnabled = false then "
-                                                   + "number of participants should be >0");
+                                                   + "number of participants(参与者) should be >0");
             }
             if (numObservers > 0) {
                 throw new IllegalArgumentException("Observers w/o participants is an invalid configuration");
@@ -705,14 +712,14 @@ public class QuorumPeerConfig {
             // of a quorum configuration
             LOG.error("Invalid configuration, only one server specified (ignoring)");
             if (numObservers > 0) {
-                throw new IllegalArgumentException("Observers w/o quorum is an invalid configuration");
+                throw new IllegalArgumentException("Observers w/o quorum(法定人数) is an invalid configuration");
             }
         } else {
             if (warnings) {
                 if (numParticipators <= 2) {
-                    LOG.warn("No server failure will be tolerated. You need at least 3 servers.");
+                    LOG.warn("No server failure will be tolerated(容忍). You need at least 3 servers.");
                 } else if (numParticipators % 2 == 0) {
-                    LOG.warn("Non-optimial configuration, consider an odd number of servers.");
+                    LOG.warn("Non-optimial configuration, consider an odd(奇数) number of servers.");
                 }
             }
 
@@ -752,9 +759,8 @@ public class QuorumPeerConfig {
         }
         QuorumServer qs = quorumVerifier.getAllMembers().get(serverId);
         if (clientPortAddress != null && qs != null && qs.clientAddr != null) {
-            if ((!clientPortAddress.getAddress().isAnyLocalAddress() && !clientPortAddress.equals(qs.clientAddr)) || (
-                clientPortAddress.getAddress().isAnyLocalAddress()
-                && clientPortAddress.getPort() != qs.clientAddr.getPort())) {
+            if ((!clientPortAddress.getAddress().isAnyLocalAddress() && !clientPortAddress.equals(qs.clientAddr)) ||
+                            (clientPortAddress.getAddress().isAnyLocalAddress() && clientPortAddress.getPort() != qs.clientAddr.getPort())) {
                 throw new ConfigException("client address for this server (id = " + serverId
                                           + ") in static config file is " + clientPortAddress
                                           + " is different from client address found in dynamic file: " + qs.clientAddr);

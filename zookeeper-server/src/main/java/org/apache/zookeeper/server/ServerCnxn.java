@@ -342,7 +342,7 @@ public abstract class ServerCnxn implements Stats, ServerWatcher {
     }
 
     public void setStale() {
-        stale = true;
+        stale = true;//陈旧的
     }
 
     public boolean isInvalid() {
@@ -359,9 +359,12 @@ public abstract class ServerCnxn implements Stats, ServerWatcher {
     }
 
     protected void packetReceived(long bytes) {
+        // 收到的包 packetsReceived + 1
+        // 自己的计数器（当前这个客户端连接）
         incrPacketsReceived();
         ServerStats serverStats = serverStats();
         if (serverStats != null) {
+            // 服务器全局计数器（整个ZK服务）
             serverStats().incrementPacketsReceived();
         }
         ServerMetrics.getMetrics().BYTES_RECEIVED_COUNT.add(bytes);

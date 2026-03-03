@@ -215,7 +215,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     }
 
     /**
-     * This is the secret that we use to generate passwords. For the moment,
+     * This is the secret that we use to generate passwords. For the moment(目前),
      * it's more of a checksum that's used in reconnection, which carries no
      * security weight, and is treated internally as if it carries no
      * security weight.
@@ -1009,6 +1009,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             passwd = new byte[0];
         }
         long sessionId = sessionTracker.createSession(timeout);
+        /**
+         * superSecret 是 Zookeeper 会话安全的核心密码，用来防止【伪造 sessionId 攻击】！
+         */
         Random r = new Random(sessionId ^ superSecret);
         r.nextBytes(passwd);
         ByteBuffer to = ByteBuffer.allocate(4);
@@ -1392,7 +1395,9 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     public void processConnectRequest(ServerCnxn cnxn, ByteBuffer incomingBuffer)
         throws IOException, ClientCnxnLimitException {
 
+        // jute的用法
         BinaryInputArchive bia = BinaryInputArchive.getArchive(new ByteBufferInputStream(incomingBuffer));
+        //将数据反序列化为 ConnectRequest
         ConnectRequest connReq = new ConnectRequest();
         connReq.deserialize(bia, "connect");
         LOG.debug(
@@ -1402,14 +1407,18 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
         long sessionId = connReq.getSessionId();
         int tokensNeeded = 1;
+        // 获取会话消耗的资源量
         if (connThrottle.isConnectionWeightEnabled()) {
-            if (sessionId == 0) {
+            if (sessionId == 0) { //sessionId == 0 就表示：这是一个【全新的客户端连接】，要求服务端分配一个新的会话 ID！
                 if (localSessionEnabled) {
+                    // 获取本地会话权重
                     tokensNeeded = connThrottle.getRequiredTokensForLocal();
                 } else {
+                    //获取全局会话权重
                     tokensNeeded = connThrottle.getRequiredTokensForGlobal();
                 }
             } else {
+                // 获取续约连接权重
                 tokensNeeded = connThrottle.getRequiredTokensForRenew();
             }
         }
@@ -1429,11 +1438,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             // this is ok -- just a packet from an old client which
             // doesn't contain readOnly field
             LOG.warn(
-                "Connection request from old client {}; will be dropped if server is in r-o mode",
+                "Connection request from old client {}; will be dropped(掉落，下降) if server is in r-o mode",
                 cnxn.getRemoteSocketAddress());
         }
         if (!readOnly && this instanceof ReadOnlyZooKeeperServer) {
-            String msg = "Refusing session request for not-read-only client " + cnxn.getRemoteSocketAddress();
+            String msg = "Refusing(拒绝) session request for not-read-only client " + cnxn.getRemoteSocketAddress();
             LOG.info(msg);
             throw new CloseRequestException(msg, ServerCnxn.DisconnectReason.NOT_READ_ONLY_CLIENT);
         }
@@ -1464,6 +1473,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // session is setup
         cnxn.disableRecv();
         if (sessionId == 0) {
+            // 创建会话id
             long id = createSession(cnxn, passwd, sessionTimeout);
             LOG.debug(
                 "Client attempting to establish new session: session = 0x{}, zxid = 0x{}, timeout = {}, address = {}",

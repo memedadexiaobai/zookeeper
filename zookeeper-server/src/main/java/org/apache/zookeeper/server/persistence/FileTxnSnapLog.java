@@ -174,6 +174,7 @@ public class FileTxnSnapLog {
     }
 
     public void setServerStats(ServerStats serverStats) {
+        //全局的一个统计
         txnLog.setServerStats(serverStats);
     }
 

@@ -169,6 +169,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         public AcceptThread(ServerSocketChannel ss, InetSocketAddress addr, Set<SelectorThread> selectorThreads) throws IOException {
             super("NIOServerCxnFactory.AcceptThread:" + addr);
             this.acceptSocket = ss;
+            // 3. 注册Accept事件到Selector
             this.acceptKey = acceptSocket.register(selector, SelectionKey.OP_ACCEPT);
             this.selectorThreads = Collections.unmodifiableList(new ArrayList<SelectorThread>(selectorThreads));
             selectorIterator = this.selectorThreads.iterator();
@@ -202,13 +203,21 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
         private void select() {
             try {
+                // 阻塞式等待就绪事件 或者 被wakeup唤醒
+                // Selects a set of keys whose corresponding channels are ready for I/O operations.
+                // This method performs a blocking selection operation.
+                // It returns only after at least one channel is selected,
+                //  this selector's wakeup method is invoked,
+                //  or the current thread is interrupted, whichever comes first.
                 selector.select();
 
                 Iterator<SelectionKey> selectedKeys = selector.selectedKeys().iterator();
-                while (!stopped && selectedKeys.hasNext()) {
+                while (!stopped && selectedKeys.hasNext()) {//循环就绪事件
                     SelectionKey key = selectedKeys.next();
                     selectedKeys.remove();
 
+                    //无效事件跳过
+                    // A key is valid upon creation and remains so until it is cancelled, its channel is closed, or its selector is closed
                     if (!key.isValid()) {
                         continue;
                     }
@@ -217,7 +226,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                             // If unable to pull a new connection off the accept
                             // queue, pause accepting to give us time to free
                             // up file descriptors and so the accept thread
-                            // doesn't spin in a tight loop.
+                            // doesn't spin(旋转) in a tight loop.
                             pauseAccept(10);
                         }
                     } else {
@@ -235,7 +244,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * selector.
          */
         private void pauseAccept(long millisecs) {
-            acceptKey.interestOps(0);
+            acceptKey.interestOps(0); //暂时取消 “接受新连接” 的监听事件 0 = 不关心任何事件
             try {
                 selector.select(millisecs);
             } catch (IOException e) {
@@ -263,6 +272,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                     throw new IOException("Too many connections max allowed is " + maxCnxns);
                 }
                 InetAddress ia = sc.socket().getInetAddress();
+                //获取当前ip的连接数
                 int cnxncount = getClientCnxnCount(ia);
 
                 if (maxClientCnxns > 0 && cnxncount >= maxClientCnxns) {
@@ -524,6 +534,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             // Push an update request on the queue to resume selecting
             // on the current set of interest ops, which may have changed
             // as a result of the I/O operations we just performed.
+            // 修改监听事件必须交给对应 Selector 线程执行，提交失败说明连接已废弃，直接关闭。
+            // 处理完了 需要更新下 SelectKey 更新队列提交失败的话就直接关闭
             if (!selectorThread.addInterestOpsUpdateRequest(key)) {
                 cnxn.close(ServerCnxn.DisconnectReason.CONNECTION_MODE_CHANGED);
             }
@@ -623,6 +635,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         configureSaslLogin();
 
         maxClientCnxns = maxcc;
+        // 初始化 maxCnxns
         initMaxCnxns();
         sessionlessCnxnTimeout = Integer.getInteger(ZOOKEEPER_NIO_SESSIONLESS_CNXN_TIMEOUT, 10000);
         // We also use the sessionlessCnxnTimeout as expiring interval for
@@ -634,6 +647,16 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
         int numCores = Runtime.getRuntime().availableProcessors();
         // 32 cores sweet spot seems to be 4 selector threads
+        /**
+         * Selector 线程 ≠ 业务线程 ,只做 IO 读写，不做复杂业务处理。
+         * 它的特点：
+         *  CPU 利用率极高（几乎不阻塞）
+         *  一个 Selector 线程能撑 1 万 + 连接
+         *  不需要太多线程，太多反而 上下文切换 导致变慢
+         * 所以 ZK 设计者：
+         *  Selector 线程数 = 根号型增长，而不是和 CPU 核心成正比
+         * 这是 高并发 NIO 网络框架的标准设计
+         */
         numSelectorThreads = Integer.getInteger(
             ZOOKEEPER_NIO_NUM_SELECTOR_THREADS,
             Math.max((int) Math.sqrt((float) numCores / 2), 1));
@@ -655,6 +678,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         }
 
         listenBacklog = backlog;
+        //打开 ServerSocketChannel
         this.ss = ServerSocketChannel.open();
         ss.socket().setReuseAddress(true);
         LOG.info("binding to port {}", addr);
@@ -663,7 +687,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
         } else {
             ss.socket().bind(addr, listenBacklog);
         }
-        ss.configureBlocking(false);
+        ss.configureBlocking(false);//非阻塞模式
         acceptThread = new AcceptThread(ss, addr, selectorThreads);
     }
 
@@ -738,9 +762,11 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
 
     @Override
     public void startup(ZooKeeperServer zks, boolean startServer) throws IOException, InterruptedException {
+        //启动所有线程
         start();
         setZooKeeperServer(zks);
         if (startServer) {
+            // 恢复数据
             zks.startdata();
             zks.startup();
         }

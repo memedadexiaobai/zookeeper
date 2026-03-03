@@ -88,6 +88,7 @@ public class QuorumMaj implements QuorumVerifier {
 
             if (key.startsWith("server.")) {
                 int dot = key.indexOf('.');
+                // server.1=127.0.0.1:2888:3888 获取sid
                 long sid = Long.parseLong(key.substring(dot + 1));
                 QuorumServer qs = new QuorumServer(sid, value);
                 allMembers.put(Long.valueOf(sid), qs);

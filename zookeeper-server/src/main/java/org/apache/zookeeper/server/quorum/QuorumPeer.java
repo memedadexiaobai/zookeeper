@@ -207,8 +207,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     public static class QuorumServer {
 
+        // 通信地址
         public MultipleAddresses addr = new MultipleAddresses();
 
+        // 选举地址
         public MultipleAddresses electionAddr = new MultipleAddresses();
 
         public InetSocketAddress clientAddr = null;
@@ -304,6 +306,22 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
         private void initializeWithAddressString(String addressStr, Function<InetSocketAddress, InetAddress> getInetAddress) throws ConfigException {
             LearnerType newType = null;
+            /**
+             * 旧格式（仅服务端地址）
+             * server.1=192.168.1.10:2888:3888
+             *
+             * 新格式（服务端地址;客户端地址）
+             * server.1=192.168.1.10:2888:3888|192.168.1.11:2888:3888;127.0.0.1:2181
+             *
+             * 用 ; 把配置字符串拆成两部分：
+             *  serverClientParts[0]：服务端通信地址（必选，集群内节点间选举 / 同步用）；
+             *  serverClientParts[1]：客户端访问地址（可选，客户端连接该节点用）；
+             *  示例：192.168.1.10:2888:3888;127.0.0.1:2181 → 拆成 [192.168.1.10:2888:3888, 127.0.0.1:2181]。
+             *
+             * 解析服务端多地址（支持 | 分隔）
+             *  服务端地址支持用 | 配置多个（比如节点有多个网卡），代码先拆分但暂不解析（后续处理）；
+             *  示例：192.168.1.10:2888:3888|192.168.1.11:2888:3888 → 拆成 [192.168.1.10:2888:3888, 192.168.1.11:2888:3888]。
+             */
             String[] serverClientParts = addressStr.split(";");
             String[] serverAddresses = serverClientParts[0].split("\\|");
 
@@ -335,7 +353,8 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
             for (String serverAddress : serverAddresses) {
                 String serverParts[] = ConfigUtils.getHostAndPort(serverAddress);
-                if ((serverClientParts.length > 2) || (serverParts.length < 3)
+                if ((serverClientParts.length > 2)
+                        || (serverParts.length < 3)
                         || (serverParts.length > 4)) {
                     throw new ConfigException(addressStr + wrongFormat);
                 }
@@ -363,12 +382,30 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                             + "configuration file on server." + this.id);
                 }
 
+                // canonicalize:规范化
                 if (canonicalize) {
+                    /**
+                     * 核心目的：解决「主机名解析不一致」的问题
+                     *  ZK 集群节点间通信（选举、数据同步）依赖「准确的主机名 / IP 映射」，但实际配置中可能出现以下问题：
+                     *  配置文件写的是「简写主机名」（如 zk1），但操作系统解析出的「规范主机名」是 zk1.example.com；
+                     *  配置文件写的是「主机名」（如 zk1），但解析后发现对应的 IP 与预期不符；
+                     *  同一节点因 DNS/hosts 配置问题，不同场景下解析出的主机名不一致（如 zk1 vs 192.168.1.10）。
+                     * 这些不一致会导致：
+                     *  节点间无法建立连接（认为对方是 “陌生节点”）；
+                     *  选举时因节点标识不统一，无法形成法定人数；
+                     *  日志中主机名混乱，排查问题困难。
+                     * 这段代码的核心作用：将配置中的「原始主机名」替换为「系统规范的主机名 / IP」，保证集群内节点标识的唯一性和一致性。
+                      */
                     InetAddress ia = getInetAddress.apply(tempAddress);
                     if (ia == null) {
                         throw new ConfigException("Unable to canonicalize address " + serverHostName + " because it's not resolvable");
                     }
 
+                    /**
+                     * 返回该 IP 对应的完全限定规范主机名（FQDN）；
+                     *  若配置写 zk1，系统解析后可能返回 zk1.example.com；
+                     *  若配置写的是 IP（如 192.168.1.10），可能返回对应的主机名，或直接返回 IP 本身。
+                      */
                     String canonicalHostName = ia.getCanonicalHostName();
 
                     if (!canonicalHostName.equals(serverHostName)

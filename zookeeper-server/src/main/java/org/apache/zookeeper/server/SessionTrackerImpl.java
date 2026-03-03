@@ -92,15 +92,82 @@ public class SessionTrackerImpl extends ZooKeeperCriticalThread implements Sessi
      *
      * <p>See also http://jira.apache.org/jira/browse/ZOOKEEPER-1622
      *
-     * @param id server Id
+     * @param id server Id 服务器 ID（1 字节，0~255，集群唯一）
      * @return the session Id
+     *
+     * 生成一个 8 字节（64 位）全局唯一 sessionId：
+     *  sessionId = 1 字节服务器 ID + 7 字节时间戳（精确到毫秒）
+     *
+     * [ 8位 服务器ID ] [ 56位 毫秒时间戳 ]
+     * bit 63        56 55                     0
+     * +---------------+-------------------------+
+     * |  serverId(8b) |    timestamp (56b)      |
+     * +---------------+-------------------------+
+     * 好处：
+     *  ✅ 全局唯一
+     *      服务器 ID 占高 8 位 → 集群内不重复
+     *      时间戳精确到毫秒 → 单机上不重复
+     *      56 位时间戳 → 几万年不重复
+     *  ✅ 有序递增
+     *      sessionId 随时间递增，方便排序、过期、管理。
+     *  ✅ 紧凑高效
+     *      8 字节 long，网络传输、存储都极快。
+     *
+     * 假设：
+     *  服务器 ID = 1
+     *  当前时间戳 = 1700000000000
+     * 生成：
+     *  serverId << 56    = 0x0100000000000000
+     *  timestamp 部分    = 0x00123456789ABCDE
+     *  最终 sessionId    = 0x01123456789ABCDE
      */
     public static long initializeNextSessionId(long id) {
         long nextSid;
-        nextSid = (Time.currentElapsedTime() << 24) >>> 8;
+        /**
+         * 把时间戳严格限制在 56 位以内！并且把最高 8 位全部清空，留给服务器 ID！
+         *
+         * 原始时间戳：1700000000000
+         * 原始二进制：00000000 00000000 00011000 11010101 00110001 10001100 01101000 00000000
+         * ---------------------------------------
+         * 第一步 <<24：1813311628832768000
+         * <<24 后二进制：00011000 11010101 00110001 10001100 01101000 00000000 00000000 00000000
+         * ---------------------------------------
+         * 第二步 >>>8：7083248549932640000
+         * <<24 >>>8 后二进制：00000000 00011000 11010101 00110001 10001100 01101000 00000000 00000000
+         * ---------------------------------------
+         * serverId = 1
+         * 最终 sessionId：8250489191891091456
+         * 最终64位二进制：00000001 00011000 11010101 00110001 10001100 01101000 00000000 00000000
+         *
+         * 为什么要 << 24？
+         *  因为 Java 的 long 是 64 位，而我们的目标是：
+         *      高 8 位 = 服务器 ID
+         *      低 56 位 = 时间戳
+         *  时间戳（毫秒）现在是 40 多位二进制，未来很多年也不会超过 56 位。
+         *  但为了 100% 确保时间戳绝对不会污染高 8 位，ZK 做了一个强制清空操作：
+         *  第一步：<< 24
+         *      把时间戳向左推 24 位，让最低 24 位全部变成 0。
+         *  第二步：>>> 8
+         *      再无符号右移 8 位，高位补 0。
+         * << 24  +  >>> 8
+         * = 整体左移了 16 位？
+         * 不！
+         * 真正效果：
+         * 【高 8 位强制变成 00000000】
+         * 【低 56 位保留时间戳】
+         *  因为高 8 位已经是 00000000，所以 | 操作可以完美把服务器 ID 放进去，不会覆盖、不会冲突！
+         *  00000000  xxxxxxxxxxxxx...（时间戳）
+         *  OR
+         *  00000001  00000000...（serverId <<56）
+         *  =
+         *  00000001  xxxxxxxxxxxxx...（最终sessionId）
+         */
+        nextSid = (Time.currentElapsedTime() << 24) >>> 8; // 把时间戳放到低 56 位,高 8 位清空留空
+        // id << 56：把服务器 ID 左移 56 位 → 放到最高 8 位
+        // |：按位或，把两部分拼起来
         nextSid = nextSid | (id << 56);
         if (nextSid == EphemeralType.CONTAINER_EPHEMERAL_OWNER) {
-            ++nextSid;  // this is an unlikely edge case, but check it just in case
+            ++nextSid;  // this is an unlikely edge case, but check it just in case 防止 sessionId 和特殊节点 ownerId 冲突
         }
         return nextSid;
     }

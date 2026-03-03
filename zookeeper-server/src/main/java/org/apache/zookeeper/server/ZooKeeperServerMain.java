@@ -65,6 +65,7 @@ public class ZooKeeperServerMain {
     public static void main(String[] args) {
         ZooKeeperServerMain main = new ZooKeeperServerMain();
         try {
+            // 核心步骤1：解析启动参数（配置文件路径）
             main.initializeAndRun(args);
         } catch (IllegalArgumentException e) {
             LOG.error("Invalid arguments, exiting abnormally", e);
@@ -104,12 +105,14 @@ public class ZooKeeperServerMain {
         }
 
         ServerConfig config = new ServerConfig();
+        // 1. 解析命令行参数，获取配置文件路径
         if (args.length == 1) {
             config.parse(args[0]);
         } else {
             config.parse(args);
         }
 
+        // 2. 启动ZK服务（核心）
         runFromConfig(config);
     }
 
@@ -132,15 +135,19 @@ public class ZooKeeperServerMain {
             }
             ServerMetrics.metricsProviderInitialized(metricsProvider);
             ProviderRegistry.initialize();
+
             // Note that this thread isn't going to be doing anything else,
             // so rather than spawning another thread, we will just call
             // run() in this thread.
             // create a file logger url from the command line args
+            // 1. 初始化数据目录（dataDir），创建快照、日志目录
             txnLog = new FileTxnSnapLog(config.dataLogDir, config.dataDir);
             JvmPauseMonitor jvmPauseMonitor = null;
             if (config.jvmPauseMonitorToRun) {
                 jvmPauseMonitor = new JvmPauseMonitor(config);
             }
+
+            // 2. 创建ZK核心服务实例
             final ZooKeeperServer zkServer = new ZooKeeperServer(jvmPauseMonitor, txnLog, config.tickTime, config.minSessionTimeout, config.maxSessionTimeout, config.listenBacklog, null, config.initialConfig);
             txnLog.setServerStats(zkServer.serverStats());
 
@@ -154,11 +161,12 @@ public class ZooKeeperServerMain {
             adminServer.setZooKeeperServer(zkServer);
             adminServer.start();
 
+            // 3. 启动网络服务（NIO），绑定clientPort
             boolean needStartZKServer = true;
             if (config.getClientPortAddress() != null) {
                 cnxnFactory = ServerCnxnFactory.createFactory();
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
-                cnxnFactory.startup(zkServer);
+                cnxnFactory.startup(zkServer); // 启动NIO线程，监听端口
                 // zkServer has been started. So we don't need to start it again in secureCnxnFactory.
                 needStartZKServer = false;
             }

@@ -89,7 +89,7 @@ public class BlueThrottle {
     Random rng;
 
     public static final String CONNECTION_THROTTLE_TOKENS = "zookeeper.connection_throttle_tokens";
-    private static final int DEFAULT_CONNECTION_THROTTLE_TOKENS;
+    private static final int  DEFAULT_CONNECTION_THROTTLE_TOKENS;
 
     public static final String CONNECTION_THROTTLE_FILL_TIME = "zookeeper.connection_throttle_fill_time";
     private static final int DEFAULT_CONNECTION_THROTTLE_FILL_TIME;
@@ -157,6 +157,7 @@ public class BlueThrottle {
         int localWeight = Integer.getInteger(LOCAL_SESSION_WEIGHT, 1);
         int renewWeight = Integer.getInteger(RENEW_SESSION_WEIGHT, 2);
 
+        //DEFAULT_GLOBAL_SESSION_WEIGHT 必须大于等于 localWeight 小于等于0的情况下为3
         if (globalWeight <= 0) {
             LOG.warn("Invalid global session weight {}. It should be larger than 0", globalWeight);
             DEFAULT_GLOBAL_SESSION_WEIGHT = 3;
@@ -170,6 +171,7 @@ public class BlueThrottle {
             DEFAULT_GLOBAL_SESSION_WEIGHT = globalWeight;
         }
 
+        //DEFAULT_LOCAL_SESSION_WEIGHT 最小是1
         if (localWeight <= 0) {
             LOG.warn("Invalid local session weight {}. It should be larger than 0", localWeight);
             DEFAULT_LOCAL_SESSION_WEIGHT = 1;
@@ -177,6 +179,7 @@ public class BlueThrottle {
             DEFAULT_LOCAL_SESSION_WEIGHT = localWeight;
         }
 
+        // DEFAULT_RENEW_SESSION_WEIGHT 必须大于等于 localWeight 小于等于0的情况下 是2
         if (renewWeight <= 0) {
             LOG.warn("Invalid renew session weight {}. It should be larger than 0", renewWeight);
             DEFAULT_RENEW_SESSION_WEIGHT = 2;
@@ -193,10 +196,12 @@ public class BlueThrottle {
         // This is based on the assumption that tokens set in config are for global sessions
         DEFAULT_CONNECTION_THROTTLE_TOKENS = connectionWeightEnabled
                 ? DEFAULT_GLOBAL_SESSION_WEIGHT * tokens : tokens;
-        DEFAULT_CONNECTION_THROTTLE_FILL_TIME = Integer.getInteger(CONNECTION_THROTTLE_FILL_TIME, 1);
         DEFAULT_CONNECTION_THROTTLE_FILL_COUNT = connectionWeightEnabled
                 ? DEFAULT_GLOBAL_SESSION_WEIGHT * fillCount : fillCount;
+
+        DEFAULT_CONNECTION_THROTTLE_FILL_TIME = Integer.getInteger(CONNECTION_THROTTLE_FILL_TIME, 1);
         DEFAULT_CONNECTION_THROTTLE_FREEZE_TIME = Integer.getInteger(CONNECTION_THROTTLE_FREEZE_TIME, -1);
+
         DEFAULT_CONNECTION_THROTTLE_DROP_INCREASE = getDoubleProp(CONNECTION_THROTTLE_DROP_INCREASE, 0.02);
         DEFAULT_CONNECTION_THROTTLE_DROP_DECREASE = getDoubleProp(CONNECTION_THROTTLE_DROP_DECREASE, 0.002);
         DEFAULT_CONNECTION_THROTTLE_DECREASE_RATIO = getDoubleProp(CONNECTION_THROTTLE_DECREASE_RATIO, 0);
@@ -315,51 +320,124 @@ public class BlueThrottle {
         return BlueThrottle.connectionWeightEnabled;
     }
 
+    /**
+     *
+     * checkBlue(now) → 蓝色算法（自适应概率丢包）
+     *  软限流
+     *  负载高了 → 按概率拒绝连接
+     *  负载下降 → 自动恢复
+     *  作用：平滑削峰、防止雪崩、让流量慢慢降
+     * tokens < need → 令牌桶（Token Bucket）
+     *  硬限流
+     *  超过令牌数 → 直接拒绝
+     *  作用：绝对保护，绝不允许超过最大处理能力
+     *
+     * 优势：
+     *  优势 1：软限流 + 硬限流 = 绝对安全 + 体验平滑
+     *  单独用令牌桶（硬限流）缺点：
+     *      流量一超，瞬间大量拒绝
+     *      客户端突刺流量会剧烈抖动
+     *      体验差，容易引起大面积报错
+     *  单独用蓝色算法（概率丢包）缺点：
+     *      是柔性调节，无法 100% 挡住超大规模流量
+     *      极端情况下还是可能压垮服务
+     *  结合后：
+     *      压力不大时：蓝色算法温柔调节
+     *      压力上来时：概率丢包平滑拒绝
+     *      压力爆表时：令牌桶直接硬挡
+     *  → 既平滑又绝对安全！
+     * 优势 2：应对雪崩重连（大规模客户端重连）
+     *  这是 ZK 最关键的场景：服务重启 → 10 万客户端瞬间重连！
+     *  结合后的效果：
+     *      蓝色算法先挡一波（概率丢包，慢慢放连接）
+     *      令牌桶兜底（绝不超过最大承载）
+     *      服务不会被瞬间冲垮
+     *      客户端不会大面积报错
+     *      流量慢慢恢复，平滑无抖动
+     * 优势 3：自适应 + 精准控制
+     *  蓝色算法：根据系统延迟、负载、队列积压动态调整拒绝概率
+     *  令牌桶：控制最大并发连接数
+     * 组合 =
+     *  智能自适应 + 绝对上限控制 = 企业级最强限流！
+     * 优势 4：防止流量突刺（Burst traffic）
+     *  令牌桶能应对瞬间小突刺
+     *  蓝色算法能应对持续高压
+     *  两者结合，任何流量都能稳稳接住
+     *
+     * 组合优势：
+     *  平滑限流，不抖动
+     *  自适应负载，智能拒绝
+     *  硬限流兜底，绝对安全
+     *  防雪崩、防重连风暴、防流量突刺
+     *  ZK 能支撑 10w+ 客户端的核心保障
+     *
+     */
     public synchronized boolean checkLimit(int need) {
         // A maxTokens setting of zero disables throttling
-        if (maxTokens == 0) {
+        if (maxTokens == 0) { // 0 代表不限流
             return true;
         }
 
         long now = Time.currentElapsedTime();
         long diff = now - lastTime;
 
-        if (diff > fillTime) {
+        // 令牌桶算法
+        if (diff > fillTime) { // 默认每1毫秒填充一次
+            /**
+             * 假设：
+             *  diff = 1000 ms（允许最大延迟 1 秒）
+             *  fillCount = 10 个
+             *  fillTime = 1000 ms（1 秒放 10 个连接）
+             *
+             * fillCount / fillTime = 每毫秒能生成多少个令牌 = 生成速率
+             * diff * (fillCount / fillTime) = 在 diff 毫秒内，一共能生成多少个令牌= 当前最大允许的 “正在排队” 连接数= 限流阈值
+             */
             int refill = (int) (diff * fillCount / fillTime);
+            // 现在的token数
             tokens = Math.min(tokens + refill, maxTokens);
             lastTime = now;
         }
 
         // A freeze time of -1 disables BLUE randomized throttling
-        if (freezeTime != -1) {
+        if (freezeTime != -1) { // 默认-1 关闭
             if (!checkBlue(now)) {
-                return false;
+                return false;  // 1. 先过蓝色概率限流（软）
             }
         }
 
+        // 传统令牌桶算法
         if (tokens < need) {
-            return false;
+            return false; // 2. 再过令牌桶硬限流（硬）
         }
 
         tokens -= need;
         return true;
     }
 
+    /**
+     * 根据系统负载，计算一个概率，决定【是否拒绝新客户端连接】
+     *  负载越高 → 拒绝概率越大
+     *  负载下降 → 拒绝概率慢慢降到 0
+     *  完全不忙 → 不拒绝
+     */
     public synchronized boolean checkBlue(long now) {
-        int length = maxTokens - tokens;
-        int limit = maxTokens;
-        long diff = now - lastFreeze;
-        long threshold = Math.round(maxTokens * decreasePoint);
+        int length = maxTokens - tokens;  // 令牌桶剩余空间
+        int limit = maxTokens; // 最大令牌数
+        long diff = now - lastFreeze;  // 距离上一次调整概率过了多久
+        long threshold = Math.round(maxTokens * decreasePoint); // decreasePoint 默认是0 动态的阈值，decreasePoint控制调整的幅度
 
-        if (diff > freezeTime) {
-            if ((length == limit) && (drop < 1)) {
-                drop = Math.min(drop + dropIncrease, 1);
-            } else if ((length <= threshold) && (drop > 0)) {
-                drop = Math.max(drop - dropDecrease, 0);
+        // 在服务忙碌的时候，为保证服务正常，快速提高拒绝频率
+        // 等服务差不多时候，缓慢降低拒绝频率 提高的速度默认是降低的10倍
+        if (diff > freezeTime) { // 防止抖动，避免频繁加减概率
+            if ((length == limit) && (drop < 1)) { // 太忙了 → 提高拒绝概率 length == limit说明token消耗完了，持续增加拒绝频率，默认+0.02
+                drop = Math.min(drop + dropIncrease, 1); // 默认0.02 最大是1
+            } else if ((length <= threshold) && (drop > 0)) { // 不忙了 → 降低拒绝概率 当小于阈值时threshold，说明服务不忙了，缓慢降低拒绝频率 默认-0.002
+                drop = Math.max(drop - dropDecrease, 0); // 默认0.002 最小是0
             }
             lastFreeze = now;
         }
 
+        // drop 概率值会动态调整，默认是0，区间[0-1] rng.nextDouble()生成0-1之间的随机数
         return !(rng.nextDouble() < drop);
     }
 

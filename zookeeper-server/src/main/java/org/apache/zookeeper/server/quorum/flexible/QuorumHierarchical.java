@@ -199,7 +199,7 @@ public class QuorumHierarchical implements QuorumVerifier {
                 } else {
                     observingMembers.put(Long.valueOf(sid), qs);
                 }
-            } else if (key.startsWith("group")) {
+            } else if (key.startsWith("group")) {// group.1=1:2:3
                 int dot = key.indexOf('.');
                 long gid = Long.parseLong(key.substring(dot + 1));
 
@@ -208,6 +208,7 @@ public class QuorumHierarchical implements QuorumVerifier {
                 String[] parts = value.split(":");
                 for (String s : parts) {
                     long sid = Long.parseLong(s);
+                    // 一台服务器只能加入一个组
                     if (serverGroup.containsKey(sid)) {
                         throw new ConfigException("Server " + sid + "is in multiple groups");
                     } else {
@@ -215,7 +216,7 @@ public class QuorumHierarchical implements QuorumVerifier {
                     }
                 }
 
-            } else if (key.startsWith("weight")) {
+            } else if (key.startsWith("weight")) { // weight.9=1
                 int dot = key.indexOf('.');
                 long sid = Long.parseLong(key.substring(dot + 1));
                 serverWeight.put(sid, Long.parseLong(value));
@@ -230,6 +231,7 @@ public class QuorumHierarchical implements QuorumVerifier {
                 if (!serverGroup.containsKey(id)) {
                     throw new ConfigException("Server " + id + "is not in a group");
                 }
+                //服务默认权重是1
                 if (!serverWeight.containsKey(id)) {
                     serverWeight.put(id, (long) 1);
                 }

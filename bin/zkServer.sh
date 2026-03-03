@@ -108,6 +108,12 @@ fi
 
 echo "Using config: $ZOOCFG" >&2
 
+# "$OSTYPE"：Shell 内置环境变量，存储当前操作系统的类型标识（比如：
+#   Solaris 系统：OSTYPE 通常为 solaris 或 sunos；
+#   Linux 系统：linux-gnu；
+#   macOS 系统：darwinXX（比如 darwin21）；
+#   BSD 系统：freebsd/openbsd 等）；
+# 加双引号 "$OSTYPE"：避免变量为空或包含空格时导致语法错误（和之前 x$2 的兜底思路一致）。
 case "$OSTYPE" in
 *solaris*)
   GREP=/usr/xpg4/bin/grep
@@ -116,7 +122,9 @@ case "$OSTYPE" in
   GREP=grep
   ;;
 esac
+# 第一步：从配置文件中提取 dataDir 等号后的内容（可能含空白）
 ZOO_DATADIR="$($GREP "^[[:space:]]*dataDir" "$ZOOCFG" | sed -e 's/.*=//')"
+# 第二步：清理提取结果的首尾空白字符
 ZOO_DATADIR="$(echo -e "${ZOO_DATADIR}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 ZOO_DATALOGDIR="$($GREP "^[[:space:]]*dataLogDir" "$ZOOCFG" | sed -e 's/.*=//')"
 

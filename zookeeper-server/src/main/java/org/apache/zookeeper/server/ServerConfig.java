@@ -92,6 +92,7 @@ public class ServerConfig {
      * @throws ConfigException error processing configuration
      */
     public void parse(String path) throws ConfigException {
+        // 1. 解析命令行参数，获取配置文件路径
         QuorumPeerConfig config = new QuorumPeerConfig();
         config.parse(path);
 
