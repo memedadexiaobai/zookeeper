@@ -26,7 +26,7 @@ import org.apache.zookeeper.server.util.AdHash;
 
 /**
  * a simple wrapper to ConcurrentHashMap that recalculates a digest after
- * each mutation.
+ * each mutation. 参考AdHash.md 介绍了原理
  */
 public class NodeHashMapImpl implements NodeHashMap {
 

@@ -73,7 +73,7 @@ public class FileSnap implements SnapShot {
         // we run through 100 snapshots (not all of them)
         // if we cannot get it running within 100 snapshots
         // we should  give up
-        List<File> snapList = findNValidSnapshots(100);
+        List<File> snapList = findNValidSnapshots(100);//最新的100个快照
         if (snapList.size() == 0) {
             return -1L;
         }
@@ -86,8 +86,16 @@ public class FileSnap implements SnapShot {
             snapZxid = Util.getZxidFromName(snap.getName(), SNAPSHOT_FILE_PREFIX);
             try (CheckedInputStream snapIS = SnapStream.getInputStream(snap)) {
                 InputArchive ia = BinaryInputArchive.getArchive(snapIS);
+                /**
+                 * 总结下这个文件读取格式：
+                 *  1. 读取文件头 FileHeader {@link FileHeader}，见 {@link #deserialize(DataTree, Map, InputArchive)}
+                 *  2. 读取count代表有多少个会话，然后读取会话数据存入到sessions：会话id->会话超时时间,见{@link SerializeUtils#deserializeSnapshot(DataTree, InputArchive, Map)}
+                 *  3. 读取map代表有多个acl数据，这里创建了2个Map，见{@link org.apache.zookeeper.server.ReferenceCountedACLCache#deserialize(InputArchive)}
+                 *  4. 剩下都是节点数据了，读取path读完，见{@link DataTree#deserialize(InputArchive, String)})}
+                 *  可以看出这个协议很简单，很节省存储空间，一个长度然后是具体数据这样的
+                 */
                 deserialize(dt, sessions, ia);
-                SnapStream.checkSealIntegrity(snapIS, ia);
+                SnapStream.checkSealIntegrity(snapIS, ia);// 校验范围：FileHeader + DataTree
 
                 // Digest feature was added after the CRC to make it backward
                 // compatible, the older code can still read snapshots which
@@ -96,7 +104,55 @@ public class FileSnap implements SnapShot {
                 // To check the intact, after adding digest we added another
                 // CRC check.
                 if (dt.deserializeZxidDigest(ia, snapZxid)) {
-                    SnapStream.checkSealIntegrity(snapIS, ia);
+                    /**
+                     * 为什么要设计两次 CRC？
+                     *  原因 1：向后兼容性
+                     *  场景：
+                     *      旧版本 ZooKeeper 读取新格式的快照
+                     *          会读取 FileHeader → DataTree → CRC1
+                     *          验证 CRC1 通过后，认为快照有效 ✓
+                     *          后面的 ZxidDigest 和 CRC2 被忽略（不会解析）
+                     *      新版本 ZooKeeper 读取旧格式的快照
+                     *          读取 FileHeader → DataTree → CRC1
+                     *          验证 CRC1 通过 ✓
+                     *          尝试读取 ZxidDigest 时遇到 EOF 异常
+                     *          deserializeZxidDigest() 捕获 EOF 返回 false
+                     *          不执行第二次 CRC 校验
+                     *  原因 2：分层校验，更精细的完整性保证
+                     *  好处：
+                     *      CRC1：保护核心数据（会话、ACL、节点数据）
+                     *      CRC2：专门保护 ZxidDigest（用于跨节点数据一致性校验）
+                     *  如果只有一个 CRC 覆盖所有内容，当校验失败时无法定位是哪个部分损坏。分开校验可以：
+                     *      精确定位问题（是数据损坏还是 Digest 损坏）
+                     *      提高可靠性（即使 Digest 损坏，核心数据可能仍是好的）
+                     * 📊 实际示例对比：
+                     *  旧版本快照文件结构
+                     *  snapshot.10000001:
+                     *   [FileHeader]      // 魔数 + 版本 + dbId
+                     *   [Sessions]        // 会话数据
+                     *   [ACLs]           // ACL 数据
+                     *   [Nodes]          // 节点数据
+                     *   [CRC1]           // 校验以上所有数据
+                     *   ["/"]            // 结束标记
+                     *  新版本快照文件结构
+                     *  snapshot.10000001:
+                     *   [FileHeader]      // 魔数 + 版本 + dbId
+                     *   [Sessions]        // 会话数据
+                     *   [ACLs]           // ACL 数据
+                     *   [Nodes]          // 节点数据
+                     *   [CRC1]           // 校验以上所有数据 ← 第一次校验
+                     *   ["/"]            // 结束标记
+                     *   [ZxidDigest]     // ZXID 摘要（新增）
+                     *   [CRC2]           // 校验 ZxidDigest ← 第二次校验
+                     *   ["/"]            // 结束标记
+                     * 两次 CRC 校验的设计体现了优秀的软件工程实践：
+                     *  向后兼容：旧代码能读新文件，新代码能读旧文件
+                     *  渐进式增强：在不破坏现有功能的前提下添加新特性
+                     *  分层校验：不同层次的数据独立校验，便于问题定位
+                     *  防御性编程：即使一部分损坏，另一部分仍可能可用
+                     * 这正是分布式系统数据持久化设计的经典案例！
+                     */
+                    SnapStream.checkSealIntegrity(snapIS, ia);// 校验范围：ZxidDigest
                 }
 
                 foundValid = true;
@@ -108,6 +164,7 @@ public class FileSnap implements SnapShot {
         if (!foundValid) {
             throw new IOException("Not able to find valid snapshots in " + snapDir);
         }
+        //最新的zxid
         dt.lastProcessedZxid = snapZxid;
         lastSnapshotInfo = new SnapshotInfo(dt.lastProcessedZxid, snap.lastModified() / 1000);
 
@@ -128,6 +185,9 @@ public class FileSnap implements SnapShot {
      */
     public void deserialize(DataTree dt, Map<Long, Integer> sessions, InputArchive ia) throws IOException {
         FileHeader header = new FileHeader();
+        // int magic;
+        // int version;
+        // long dbid;
         header.deserialize(ia, "fileheader");
         if (header.getMagic() != SNAP_MAGIC) {
             throw new IOException("mismatching magic headers " + header.getMagic() + " !=  " + FileSnap.SNAP_MAGIC);

@@ -149,7 +149,7 @@ public class DataTree {
     public static final int STAT_OVERHEAD_BYTES = (6 * 8) + (5 * 4);
 
     /**
-     * This hashtable lists the paths of the ephemeral nodes of a session.
+     * This hashtable lists the paths of the ephemeral(短暂) nodes of a session.
      */
     private final Map<Long, HashSet<String>> ephemerals = new ConcurrentHashMap<Long, HashSet<String>>();
 
@@ -283,19 +283,20 @@ public class DataTree {
     }
 
     DataTree(DigestCalculator digestCalculator) {
-        this.digestCalculator = digestCalculator;
+        this.digestCalculator = digestCalculator;//摘要计算器
         nodes = new NodeHashMapImpl(digestCalculator);
 
-        /* Rather than fight it, let root have an alias */
+        /* Rather than fight it, let root have an alias / 和 '' 是等效的 */
         nodes.put("", root);
-        nodes.putWithoutDigest(rootZookeeper, root);
+        nodes.putWithoutDigest(rootZookeeper, root);// /
 
         /** add the proc node and quota node */
-        root.addChild(procChildZookeeper);
-        nodes.put(procZookeeper, procDataNode);
+        root.addChild(procChildZookeeper);// zookeeper
+        nodes.put(procZookeeper, procDataNode);// /zookeeper
 
-        procDataNode.addChild(quotaChildZookeeper);
-        nodes.put(quotaZookeeper, quotaDataNode);
+        procDataNode.addChild(quotaChildZookeeper);// quota
+        nodes.put(quotaZookeeper, quotaDataNode);// /zookeeper/quota
+        // dataNode层面的结构是： / -> zookeeper -> quota 连起来是颗树
 
         addConfigNode();
 
@@ -316,12 +317,12 @@ public class DataTree {
     public void addConfigNode() {
         DataNode zookeeperZnode = nodes.get(procZookeeper);
         if (zookeeperZnode != null) { // should always be the case
-            zookeeperZnode.addChild(configChildZookeeper);
+            zookeeperZnode.addChild(configChildZookeeper); // config
         } else {
             assert false : "There's no /zookeeper znode - this should never happen.";
         }
 
-        nodes.put(configZookeeper, new DataNode(new byte[0], -1L, new StatPersisted()));
+        nodes.put(configZookeeper, new DataNode(new byte[0], -1L, new StatPersisted()));// /zookeeper/config
         try {
             // Reconfig node is access controlled by default (ZOOKEEPER-2014).
             setACL(configZookeeper, ZooDefs.Ids.READ_ACL_UNSAFE, -1);
@@ -551,13 +552,13 @@ public class DataTree {
         // The child might already be deleted during taking fuzzy snapshot,
         // but we still need to update the pzxid here before throw exception
         // for no such child
-        DataNode parent = nodes.get(parentName);
+        DataNode parent = nodes.get(parentName);//直接定位到对应的dataNode
         if (parent == null) {
             throw new KeeperException.NoNodeException();
         }
         synchronized (parent) {
             nodes.preChange(parentName, parent);
-            parent.removeChild(childName);
+            parent.removeChild(childName);//set集合移除子节点
             // Only update pzxid when the zxid is larger than the current pzxid,
             // otherwise we might override some higher pzxid set by a create
             // Txn, which could cause the cversion and pzxid inconsistent
@@ -567,6 +568,7 @@ public class DataTree {
             nodes.postChange(parentName, parent);
         }
 
+        // 1.先处理父节点 2.处理子节点
         DataNode node = nodes.get(path);
         if (node == null) {
             throw new KeeperException.NoNodeException();
@@ -1209,6 +1211,28 @@ public class DataTree {
      *            the path to be used
      * @param counts
      *            the int count
+     * getCounts 方法用于 ZooKeeper 的配额（Quota）管理功能，具体场景包括
+     * 1. 核心功能
+     *  递归统计指定路径下所有子节点的：
+     *      节点数量（counts.count）
+     *      数据字节数（counts.bytes）
+     * 2. 使用场景
+     *  该方法被 updateQuotaForPath 方法调用（第 1242 行），用于：
+     *      配额统计更新：当需要更新某个路径的配额使用情况时，通过此方法计算该路径及其所有子孙节点的总数和总字节数
+     *      配额检查：ZooKeeper 可以为特定路径设置节点数量和存储空间的上限配额，这个方法负责统计实际使用量
+     *      统计信息维护：统计结果会被保存到配额统计节点（/zookeeper/quota/<path>/stats）中
+     * 3.调用链路
+     * setupQuota() (初始化配额)
+     *     └─> traverseNode() (遍历配额节点)
+     *             └─> updateQuotaForPath() (更新配额统计)
+     *                     └─> getCounts() (递归统计节点数和字节数)
+     * 4. 工作流程
+     *  获取指定路径的节点
+     *  同步获取该节点的所有子节点
+     *  统计当前节点的数据长度
+     *  累加到计数器（节点数 +1，字节数增加）
+     *  递归遍历所有子节点，重复上述过程
+     * 这是一个典型的树形结构递归遍历算法，用于资源配额的统计和管理。
      */
     private void getCounts(String path, Counts counts) {
         DataNode node = getNode(path);
@@ -1238,10 +1262,12 @@ public class DataTree {
      */
     private void updateQuotaForPath(String path) {
         Counts c = new Counts();
+        //获取该路径下所有的节点数和数据字节数
         getCounts(path, c);
         StatsTrack strack = new StatsTrack();
         strack.setBytes(c.bytes);
         strack.setCount(c.count);
+        // 配额统计节点：/zookeeper/quota/<path>/stats
         String statPath = Quotas.statPath(path);
         DataNode node = getNode(statPath);
         // it should exist
@@ -1268,12 +1294,13 @@ public class DataTree {
             Set<String> childs = node.getChildren();
             children = childs.toArray(new String[childs.size()]);
         }
+        //一直到叶子结点在更新
         if (children.length == 0) {
             // this node does not have a child
             // is the leaf node
             // check if its the leaf node
-            String endString = "/" + Quotas.limitNode;
-            if (path.endsWith(endString)) {
+            String endString = "/" + Quotas.limitNode;// zookeeper_limits
+            if (path.endsWith(endString)) {// 以/zookeeper_limits结尾的节点
                 // ok this is the limit node
                 // get the real node and update
                 // the count and the bytes
@@ -1297,6 +1324,7 @@ public class DataTree {
         if (node == null) {
             return;
         }
+        //配额设置
         traverseNode(quotaPath);
     }
 
@@ -1382,7 +1410,7 @@ public class DataTree {
                 root = node;
             } else {
                 String parentPath = path.substring(0, lastSlash);
-                DataNode parent = nodes.get(parentPath);
+                DataNode parent = nodes.get(parentPath);//根据全路径查询父节点 DataNode
                 if (parent == null) {
                     throw new IOException("Invalid Datatree, unable to find "
                                           + "parent "

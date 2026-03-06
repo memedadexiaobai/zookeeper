@@ -64,6 +64,11 @@
 
          final String value;
          final Map<String, TrieNode> children;
+         // 用于标识一个节点是否是有效路径的终点。
+         // property 是一个布尔标志，用于：
+         //     ✅ 标记某个节点是否是完整路径的终点（有配额的节点）
+         //     ✅ 帮助 findMaxPrefix 快速定位最近的配额祖先节点
+         //     ✅ 支持部分路径删除（只取消标记，不删除整个子树）
          boolean property;
          TrieNode parent;
 
@@ -312,6 +317,7 @@
                      LOG.debug("{}", element);
                      break;
                  }
+                 // 只有 property=true 的节点才是有效的配额路径
                  if (parent.hasProperty()) {
                      deepestPropertyNode = parent;
                  }
@@ -321,12 +327,15 @@
                  return "/";
              }
 
+             //上边寻找到最深的有配额的节点设置
+             //这里查询 deepestPropertyNode 的祖先节点，用来拼装完整路径
              final Deque<String> treePath = new ArrayDeque<>();
              TrieNode node = deepestPropertyNode;
              while (node != this.rootNode) {
                  treePath.offerFirst(node.getValue());
                  node = node.parent;
              }
+             // 返回最近的有配额的祖先节点
              return "/" + String.join("/", treePath);
          } finally {
              readLock.unlock();

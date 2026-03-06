@@ -101,7 +101,7 @@ public class ReferenceCountedACLCache {
 
     public void deserialize(InputArchive ia) throws IOException {
         clear();
-        int i = ia.readInt("map");
+        int i = ia.readInt("map");// 多少个map
 
         LinkedHashMap<Long, List<ACL>> deserializedMap = new LinkedHashMap<>();
         // keep read operations out of synchronization block
@@ -113,6 +113,16 @@ public class ReferenceCountedACLCache {
                 throw new RuntimeException("Incorrent format of InputArchive when deserialize DataTree - missing acls");
             }
             while (!j.done()) {
+                /**
+                 * class Id {
+                 *   ustring scheme;
+                 *   ustring id;
+                 * }
+                 * class ACL {
+                 *   int perms;
+                 *   Id id;
+                 *  }
+                  */
                 ACL acl = new ACL();
                 acl.deserialize(ia, "acl");
                 aclList.add(acl);
@@ -127,6 +137,7 @@ public class ReferenceCountedACLCache {
             for (Map.Entry<Long, List<ACL>> entry : deserializedMap.entrySet()) {
                 Long val = entry.getKey();
                 List<ACL> aclList = entry.getValue();
+                //当前最大的acl索引
                 if (aclIndex < val) {
                     aclIndex = val;
                 }
@@ -201,6 +212,18 @@ public class ReferenceCountedACLCache {
         }
     }
 
+    /**
+     * 清理 ACL 缓存中的废弃条目，释放不再使用的 ACL 占用的内存。
+     * 执行流程
+     *  遍历引用计数器：迭代 referenceCounter 中的所有 ACL 引用计数
+     *  检查引用计数：如果某个 ACL 的引用计数 ≤ 0，说明没有节点再使用它
+     *  三级清理：
+     *      从 aclKeyMap 删除映射（ACL → 原始 key）
+     *      从 longKeyMap 删除映射（原始 key → ACL）
+     *      从 referenceCounter 删除计数记录
+     * 使用场景
+     *  当 ZooKeeper 节点被删除时，其关联的 ACL 引用计数会递减。定期调用此方法回收无用的 ACL，避免内存泄漏。
+     */
     public synchronized void purgeUnused() {
         Iterator<Map.Entry<Long, AtomicLongWithEquals>> refCountIter = referenceCounter.entrySet().iterator();
         while (refCountIter.hasNext()) {

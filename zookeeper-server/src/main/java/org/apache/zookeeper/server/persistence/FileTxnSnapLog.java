@@ -252,6 +252,7 @@ public class FileTxnSnapLog {
      */
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
+        //将数据恢复到 DataTree 和 sessions 中
         long deserializeResult = snapLog.deserialize(dt, sessions);
         ServerMetrics.getMetrics().STARTUP_SNAP_LOAD_TIME.add(Time.currentElapsedTime() - snapLoadingStartTime);
         FileTxnLog txnLog = new FileTxnLog(dataDir);

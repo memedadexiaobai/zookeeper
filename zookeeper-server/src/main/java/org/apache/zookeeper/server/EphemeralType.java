@@ -89,6 +89,30 @@ public enum EphemeralType {
                 throw new IllegalArgumentException("ttl must be positive and cannot be larger than: " + TTL.maxValue());
             }
             //noinspection PointlessBitwiseExpression
+            /**
+             * 通过位运算来组合一个 64 位的 long 值,将一个 TTL 值转换为扩展类型的临时节点所有者标识符。
+             * 高 8 位     中间 2 字节      低 5 字节 (40 位)
+             * ┌──────┬──────────────┬─────────────────┐
+             * │ 0xff │   0x0000     │     ttl 值       │
+             * │EXTENDED│ EXTENDED_  │  (TTL 毫秒数)    │
+             * │ _MASK │  BIT_TTL   │                 │
+             * └──────┴──────────────┴─────────────────┘
+             * EXTENDED_MASK = 0xff00000000000000L
+             *  设置高 8 位为 0xff，标识这是一个扩展类型的节点
+             * EXTENDED_BIT_TTL = 0x0000
+             *  接下来的 2 字节表示扩展功能的类型，0x0000 表示这是 TTL 节点类型
+             *  虽然值是 0，但显式地 OR 上它是为了代码的可读性和文档化（正如注释所说）
+             *  虽然 EXTENDED_BIT_TTL 的值是 0，OR 上它看起来没有实际作用，但这样做可以明确地记录代码意图——需要设置正确的扩展类型位，使代码更具可读性和可维护性。
+             * ttl
+             *  低 40 位存储实际的 TTL 值（毫秒）
+             *
+             * 假设 ttl = 1（1 毫秒）：
+             * EXTENDED_MASK:    0xff00000000000000
+             * EXTENDED_BIT_TTL: 0x0000000000000000
+             * ttl:              0x0000000000000001
+             * ------------------------------------
+             * 结果：            0xff00000000000001
+             */
             return EXTENDED_MASK
                    | EXTENDED_BIT_TTL
                    | ttl;  // TTL_RESERVED_BIT is actually zero - but it serves to document that the proper extended bit needs to be set
@@ -130,6 +154,7 @@ public enum EphemeralType {
     public static final long CONTAINER_EPHEMERAL_OWNER = Long.MIN_VALUE;
     public static final long MAX_EXTENDED_SERVER_ID = 0xfe;  // 254
 
+    // 0x 十六进制
     private static final long EXTENDED_MASK = 0xff00000000000000L;
     private static final long EXTENDED_BIT_TTL = 0x0000;
     private static final long RESERVED_BITS_MASK = 0x00ffff0000000000L;

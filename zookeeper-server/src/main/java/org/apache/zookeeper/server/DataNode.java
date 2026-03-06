@@ -62,7 +62,7 @@ public class DataNode implements Record {
     /**
      * the list of children for this node. note that the list of children string
      * does not contain the parent path -- just the last part of the path. This
-     * should be synchronized on except deserializing (for speed up issues).
+     * should be synchronized on except(除了) deserializing (for speed up issues).
      */
     private Set<String> children = null;
 

@@ -54,7 +54,7 @@ public class DigestCalculator {
      * @param stat the stat associated with the node
      * @return the digest calculated from the given params
      */
-    long calculateDigest(String path, byte[] data, StatPersisted stat) {
+    long calculateDigest(String path, byte[] data, StatPersisted stat) {// Digest:摘要
 
         if (!ZooKeeperServer.isDigestEnabled()) {
             return 0;
@@ -66,10 +66,10 @@ public class DigestCalculator {
         // Instead of taking time to fix that, we decided to disable digest
         // check for all the nodes under /zookeeper/ first.
         //
-        // We can enable this after fixing that inconsistent problem. The
+        // We can enable this after fixing that inconsistent(不一致) problem. The
         // digest version in the protocol enables us to change the digest
         // calculation without disrupting the system.
-        if (path.startsWith(ZooDefs.ZOOKEEPER_NODE_SUBTREE)) {
+        if (path.startsWith(ZooDefs.ZOOKEEPER_NODE_SUBTREE)) {// /zookeeper/
             return 0;
         }
 
@@ -94,6 +94,9 @@ public class DigestCalculator {
         bb.putInt(stat.getAversion());
         bb.putLong(stat.getEphemeralOwner());
 
+        // CRC32 的 update() 方法支持增量计算。你可以多次调用 update() 添加不同的数据段，
+        //  最终 getValue() 会返回所有数据的综合校验值。
+        // 这样设计的好处是：只要路径、数据或元数据中任何一个发生变化，计算出的 digest 就会不同，从而可以检测到数据不一致的情况。
         CRC32 crc = new CRC32();
         crc.update(path.getBytes());
         if (data != null) {

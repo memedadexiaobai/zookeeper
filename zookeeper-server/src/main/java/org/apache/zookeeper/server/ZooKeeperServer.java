@@ -509,7 +509,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
          * initialized before running leader election so that
          * the server could pick its zxid for its initial vote.
          * It does it by invoking QuorumPeer#getLastLoggedZxid.
-         * Consequently, we don't need to initialize it once more
+         * Consequently(因此), we don't need to initialize it once more
          * and avoid the penalty of loading it a second time. Not
          * reloading it is particularly important for applications
          * that host a large database.
