@@ -86,6 +86,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
     /**
      * The time (in milliseconds) this is the maximum time for which throttler
      * thread may wait to be notified that it may proceed processing a request.
+     * stallTime：停顿时间 延迟时间
      */
     private static volatile int stallTime = Integer.getInteger("zookeeper.request_throttle_stall_time", 100);
 
@@ -154,7 +155,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                 }
 
                 // Throttling is disabled when maxRequests = 0
-                if (maxRequests > 0) {
+                if (maxRequests > 0) { //启用了 节流器
                     while (!killed) {
                         if (dropStaleRequests && request.isStale()) {
                             // Note: this will close the connection
@@ -166,6 +167,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                         if (zks.getInProcess() < maxRequests) {
                             break;
                         }
+                        //休眠stallTime在处理
                         throttleSleep(stallTime);
                     }
                 }
@@ -182,6 +184,7 @@ public class RequestThrottler extends ZooKeeperCriticalThread {
                     final long elapsedTime = Time.currentElapsedTime() - request.requestThrottleQueueTime;
                     ServerMetrics.getMetrics().REQUEST_THROTTLE_QUEUE_TIME.add(elapsedTime);
                     if (shouldThrottleOp(request, elapsedTime)) {
+                        //标记这个请求被限流了
                       request.setIsThrottled(true);
                       ServerMetrics.getMetrics().THROTTLED_OPS.add(1);
                     }

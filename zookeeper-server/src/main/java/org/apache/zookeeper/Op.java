@@ -223,6 +223,10 @@ public abstract class Op {
      * not the write.  A similar effect could be achieved by writing the same data back, but that leads to
      * way more version updates than are necessary and more writing in general.
      *
+     * 构建一个版本检查操作。参数类似于 ZooKeeper.setData 方法，但不提供数据，因为不打算更新。
+     * 这样做的目的是允许读 - 改 -- 写操作应用于多个 znode，但其中一些 znode 只参与读取，不参与写入。
+     * 类似的效果可以通过写回相同的数据来实现，但这会导致不必要的过多版本更新和更多的写入。
+     *
      * @param path
      *                the path of the node
      * @param version

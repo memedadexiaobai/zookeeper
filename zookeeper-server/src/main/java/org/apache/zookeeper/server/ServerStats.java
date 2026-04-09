@@ -140,7 +140,7 @@ public class ServerStats {
      * that originated from that machine.
      */
     public void updateLatency(Request request, long currentTime) {
-        long latency = currentTime - request.createTime;
+        long latency = currentTime - request.createTime;// latency:延迟
         if (latency < 0) {
             return;
         }

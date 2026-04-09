@@ -75,6 +75,7 @@ public class NIOServerCnxn extends ServerCnxn {
 
     protected ByteBuffer incomingBuffer = lenBuffer;
 
+    // outgoingBuffers 是一个发送缓冲区队列，用于存储待发送到客户端的响应
     private final Queue<ByteBuffer> outgoingBuffers = new LinkedBlockingQueue<ByteBuffer>();
 
     private int sessionTimeout;
@@ -148,11 +149,14 @@ public class NIOServerCnxn extends ServerCnxn {
         }
 
         synchronized (outgoingBuffers) {
+            // 将响应数据添加到队列
             for (ByteBuffer buffer : buffers) {
                 outgoingBuffers.add(buffer);
             }
+            // 添加一个标记包（用于统计）
             outgoingBuffers.add(packetSentinel);
         }
+        // 通知 Selector 更新监听状态（准备写入）
         requestInterestOpsUpdate();
     }
 
@@ -187,10 +191,10 @@ public class NIOServerCnxn extends ServerCnxn {
             incomingBuffer.flip();
             // 这里是总共收到的字节数 flip切换模式，4 + incomingBuffer.remaining() 就是本轮读取到的所有的字节数
             packetReceived(4 + incomingBuffer.remaining());
-            if (!initialized) {//未初始化请求
+            if (!initialized) {//第一次连接，未初始化请求
                 readConnectRequest();//连接请求处理
             } else {
-                readRequest();//普通请求
+                readRequest();//普通请求 开始处理命令
             }
             // 恢复下incomingBuffer 处理下一批数据
             lenBuffer.clear();
@@ -226,15 +230,51 @@ public class NIOServerCnxn extends ServerCnxn {
 
     void handleWrite(SelectionKey k) throws IOException {
         if (outgoingBuffers.isEmpty()) {
-            return;
+            return; // 没有数据要发送
         }
 
-        /*
+        /**
          * This is going to reset the buffer position to 0 and the
          * limit to the size of the buffer, so that we can fill it
          * with data from the non-direct buffers that we need to
          * send.
+         * #### **为什么需要这个队列？**
+         *
+         * | 问题 | 解决方案 |
+         * |------|---------|
+         * | **异步非阻塞 IO** | NIO 模式下，socket 可能暂时不可写，需要缓冲等待 |
+         * | **多响应排队** | 多个请求可能同时完成，需要按顺序发送 |
+         * | **避免内存拷贝** | 直接使用 ByteBuffer，减少数据复制 |
+         * | **流量控制** | 队列大小可以反映网络拥塞情况 |
+         * ┌─────────────────────────────────────────────────────────┐
+         * │                    ZooKeeper Server                      │
+         * │                                                          │
+         * │  处理请求 ──→ 生成响应 ──→ serialize()                   │
+         * │                              ↓                           │
+         * │                       sendBuffer()                       │
+         * │                              ↓                           │
+         * │              ┌──────────────────────────┐               │
+         * │              │   outgoingBuffers Queue  │               │
+         * │              │  [buf1][buf2][sentinel]  │               │
+         * │              └──────────────────────────┘               │
+         * │                              ↓                           │
+         * │                    handleWrite()                         │
+         * │                              ↓                           │
+         * │                     sock.write()                         │
+         * │                              ↓                           │
+         * └──────────────────────────────┼───────────────────────────┘
+         *                                ↓
+         *                     ┌──────────────┐
+         *                     │ Client Socket│
+         *                     └──────────────┘
+         * outgoingBuffers 是 ZooKeeper NIO 通信模型的核心组件，它：
+         *      ✅ 解耦生产和消费：请求处理线程只需将响应放入队列，无需等待实际发送
+         *      ✅ 支持异步非阻塞 IO：适应 NIO 的 Selector 多路复用机制
+         *      ✅ 提高吞吐量：批量发送、分散写优化
+         *      ✅ 流量监控：通过队列长度感知网络拥塞程度
+         * 这是一个典型的生产者 - 消费者模式在 NIO 网络编程中的应用。
          */
+        // 方式 1：使用分散写（Gathering Write）直接发送
         ByteBuffer directBuffer = NIOServerCnxnFactory.getDirectBuffer();
         if (directBuffer == null) {
             ByteBuffer[] bufferList = new ByteBuffer[outgoingBuffers.size()];
@@ -242,7 +282,7 @@ public class NIOServerCnxn extends ServerCnxn {
             // byte buffers to reflect the bytes that were written out.
             sock.write(outgoingBuffers.toArray(bufferList));
 
-            // Remove the buffers that we have sent
+            // Remove the buffers that we have sent 清理已发送的缓冲区
             ByteBuffer bb;
             while ((bb = outgoingBuffers.peek()) != null) {
                 if (bb == ServerCnxnFactory.closeConn) {
@@ -252,19 +292,75 @@ public class NIOServerCnxn extends ServerCnxn {
                     packetSent();
                 }
                 if (bb.remaining() > 0) {
-                    break;
+                    break;  // 还有未发送完的数据
                 }
-                outgoingBuffers.remove();
+                outgoingBuffers.remove();  // ← 移除已发送的缓冲区
             }
-        } else {
+        } else { // 方式 2：通过 DirectBuffer 中转发送
             directBuffer.clear();
 
             for (ByteBuffer b : outgoingBuffers) {
+                /**
+                 *   将多个小缓冲区拷贝到 directBuffer
+                 *   public final int remaining() {
+                 *       return limit - position;
+                 *   }
+                 *   position：当前位置（下一个要读/写的位置）
+                 *   limit：边界（最大可操作位置）
+                 *   remaining = 还能读/写多少字节
+                 *   remaining() - 剩余可操作字节数 判断 directBuffer 是否有足够空间
+                 *
+                 * ByteBuffer buffer = ByteBuffer.allocate(10);
+                 * // 初始状态：position=0, limit=10, capacity=10
+                 * buffer.remaining(); // 返回 10
+                 *
+                 * // 写入 3 个字节后
+                 * buffer.position();  // 3
+                 * buffer.remaining(); // 7 (还能写 7 个字节)
+                 *
+                 * // 调用 flip() 后（准备读取）
+                 * buffer.flip();      // position=0, limit=3
+                 * buffer.remaining(); // 3 (还能读 3 个字节)
+                 */
                 if (directBuffer.remaining() < b.remaining()) {
-                    /*
+                    /**
                      * When we call put later, if the directBuffer is to
                      * small to hold everything, nothing will be copied,
                      * so we've got to slice the buffer if it's too big.
+                     * slice() - 创建子缓冲区
+                     * 作用：创建一个共享底层数据的新 ByteBuffer，从当前 position 开始。
+                     * 特点：
+                     *  ✅ 新 buffer 和原 buffer 共享数据数组
+                     *  ✅ 修改一个会影响另一个
+                     *  ✅ 有独立的 position、limit、mark
+                     *  ✅ 容量 = 原 buffer 的 remaining()
+                     *
+                     * ByteBuffer original = ByteBuffer.allocate(10);
+                     * original.position(3);  // 移动到位置 3
+                     *
+                     * ByteBuffer sliced = original.slice();
+                     * // sliced 的状态：
+                     * //   capacity = 7 (原 buffer 从 position 到 limit 的长度)
+                     * //   position = 0
+                     * //   limit = 7
+                     * //   共享同一个 byte[] 数组
+                     *
+                     * // 修改 sliced[0] 实际上修改了 original[3]
+                     * sliced.put(0, (byte) 'A');
+                     * System.out.println(original.get(3)); // 输出 'A'
+                     *
+                     * limit() - 设置或获取边界
+                     * 两种用法：
+                     *  ① 作为 setter：设置 limit 并返回自身（链式调用
+                     *   buffer.limit(5);  // 设置 limit = 5
+                     *   buffer.limit();   // 返回 5
+                     *  ② 在 slice() 后使用：
+                     *   ByteBuffer sliced = original.slice();
+                     *   // sliced.capacity() = 7
+                     *
+                     *   sliced.limit(5);
+                     *   // 现在只能访问前 5 个字节
+                     *   // sliced.remaining() = 5 (因为 position=0)
                      */
                     b = (ByteBuffer) b.slice().limit(directBuffer.remaining());
                 }
@@ -275,24 +371,74 @@ public class NIOServerCnxn extends ServerCnxn {
                  * needed), so we save and reset the position after the
                  * copy
                  */
-                int p = b.position();
-                directBuffer.put(b);
-                b.position(p);
+                int p = b.position();     // ① 保存原始 position
+                /**
+                 * put(ByteBuffer src) - 批量写入
+                 * 行为：
+                 *  从 src.position() 开始读取
+                 *  读到 src.limit() 结束
+                 *  写入到当前 buffer 的 position 位置
+                 *  同时修改两个 buffer 的 position
+                 *
+                 * ByteBuffer src = ByteBuffer.allocate(10);
+                 * src.put("0123456789".getBytes());
+                 * src.flip();  // position=0, limit=10
+                 *
+                 * ByteBuffer dest = ByteBuffer.allocate(20);
+                 * dest.position(5);  // 从位置 5 开始写
+                 *
+                 * dest.put(src);
+                 * // 结果：
+                 * //   src.position() = 10 (读完)
+                 * //   dest.position() = 15 (5 + 10)
+                 * //   dest[5..14] = "0123456789"
+                 *
+                 * // ① 向 directBuffer 填充数据
+                  */
+                directBuffer.put(b); // 将数据从 b 拷贝到 directBuffer  // ② put 会修改 b.position
+                b.position(p); // ③ 恢复 position 如果不恢复，后续清理队列时会出错
                 if (directBuffer.remaining() == 0) {
                     break;
                 }
             }
-            /*
+            // directBuffer.position() = 已写入的字节数
+            /**
              * Do the flip: limit becomes position, position gets set to
              * 0. This sets us up for the write.
+             * flip() - 翻转缓冲区 作用：写模式 → 读模式 切换
+             * public final Buffer flip() {
+             *     limit = position;   // limit 设为当前位置（已写入的数据量）
+             *     position = 0;       // position 重置为 0（从头开始读）
+             *     return this;
+             * }
+             * // ① 写模式
+             * ByteBuffer buffer = ByteBuffer.allocate(10);
+             * buffer.put("Hello".getBytes());  // 写入 5 字节
+             * // position=5, limit=10
+             *
+             * // ② 准备读取
+             * buffer.flip();
+             * // position=0, limit=5
+             * // remaining() = 5 (可以读 5 个字节)
+             *
+             * // ③ 读取数据
+             * byte[] data = new byte[5];
+             * buffer.get(data);
+             * // position=5, remaining()=0 (读完)
+             *
+             * // ④ 如果要再次写入
+             * buffer.clear();  // 或 compact()
+             * // position=0, limit=10
              */
-            directBuffer.flip();
+            directBuffer.flip(); // ② 准备发送到 socket 切换到读模式
+            // position=0, limit=已写入的字节数
 
-            int sent = sock.write(directBuffer);
+            // ③ 从 directBuffer 读取并发送
+            int sent = sock.write(directBuffer); // SocketChannel 从 position 读到 limit
 
             ByteBuffer bb;
 
-            // Remove the buffers that we have sent
+            // Remove the buffers that we have sent  清理已发送的缓冲区
             while ((bb = outgoingBuffers.peek()) != null) {
                 if (bb == ServerCnxnFactory.closeConn) {
                     throw new CloseRequestException("close requested", DisconnectReason.CLIENT_CLOSED_CONNECTION);
@@ -775,7 +921,7 @@ public class NIOServerCnxn extends ServerCnxn {
             ByteBuffer[] bb = serialize(h, r, tag, cacheKey, stat, opCode);
             responseSize = bb[0].getInt();
             bb[0].rewind();
-            sendBuffer(bb);
+            sendBuffer(bb); // ← 将响应添加到 outgoingBuffers
             decrOutstandingAndCheckThrottle(h);
         } catch (Exception e) {
             LOG.warn("Unexpected exception. Destruction averted.", e);

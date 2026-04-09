@@ -143,6 +143,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     private boolean shouldSnapshot() {
         int logCount = zks.getZKDatabase().getTxnCount();
         long logSize = zks.getZKDatabase().getTxnSize();
+        // 触发条件：交易日志数量或大小超过阈值
         return (logCount > (snapCount / 2 + randRoll))
                || (snapSizeInBytes > 0 && logSize > (snapSizeInBytes / 2 + randSize));
     }
@@ -156,7 +157,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
     public void run() {
         try {
             // we do this in an attempt to ensure that not all of the servers
-            // in the ensemble take a snapshot at the same time
+            // in the ensemble(整体) take a snapshot at the same time
             resetSnapshotStats();
             lastFlushTime = Time.currentElapsedTime();
             while (true) {
@@ -200,7 +201,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                             }.start();
                         }
                     }
-                } else if (toFlush.isEmpty()) {
+                } else if (toFlush.isEmpty()) {//负载重的情况下 直接让下一个处理器处理
                     // optimization for read heavy workloads
                     // iff this is a read or a throttled request(which doesn't need to be written to the disk),
                     // and there are no pending flushes (writes), then just pass this to the next processor
@@ -213,6 +214,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     continue;
                 }
                 toFlush.add(si);
+                // 要么到刷新时间了 要么达到了最大的刷新大小
                 if (shouldFlush()) {
                     flush();
                 }

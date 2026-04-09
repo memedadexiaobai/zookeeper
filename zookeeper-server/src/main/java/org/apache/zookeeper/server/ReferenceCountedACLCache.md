@@ -139,3 +139,216 @@ if (aclIndex < val) {
     - 重建三个 Map 和 `aclIndex`
 
 这种设计实现了 **ACL 数据的去重存储** 和 **自动垃圾回收**,有效节省了内存空间。
+
+ 
+# 如何通过long ID 找到对应的 ACL
+## 🔍 核心数据结构
+
+```java
+// 1. Long → List<ACL> 的映射 (通过 ID 找 ACL)
+final Map<Long, List<ACL>> longKeyMap = new HashMap<>();
+
+// 2. List<ACL> → Long的映射 (通过 ACL 找 ID)
+final Map<List<ACL>, Long> aclKeyMap = new HashMap<>();
+
+// 3. 引用计数器 (记录每个 ACL 被多少个节点使用)
+final Map<Long, AtomicLongWithEquals> referenceCounter = new HashMap<>();
+
+// 4. ACL 索引生成器
+long aclIndex = 0;
+
+// 5. 特殊 ID：OPEN_UNSAFE_ACL_ID = -1
+private static final long OPEN_UNSAFE_ACL_ID = -1L;
+```
+
+
+## 📋 查找规则详解
+
+### **规则 1：特殊值 `-1` 直接返回**
+
+```java
+public synchronized List<ACL> convertLong(Long longVal) {
+    if (longVal == null) {
+        return null;
+    }
+    // 如果 ID 是 -1，直接返回预定义的 OPEN_ACL_UNSAFE
+    if (longVal == OPEN_UNSAFE_ACL_ID) {
+        return ZooDefs.Ids.OPEN_ACL_UNSAFE;  // [(world, anyone)]
+    }
+    // 正常从缓存获取
+    List<ACL> acls = longKeyMap.get(longVal);
+    // ...
+}
+```
+
+
+### **规则 2：普通 ID 从 HashMap 查找**
+
+```java
+// 直接从 longKeyMap 中获取
+List<ACL> acls = longKeyMap.get(longVal);
+if (acls == null) {
+    LOG.error("ERROR: ACL not available for long {}", longVal);
+    throw new RuntimeException("Failed to fetch acls for " + longVal);
+}
+return acls;
+```
+
+
+### **规则 3：ID 生成规则（递增）**
+
+```java
+private long incrementIndex() {
+    return ++aclIndex;  // 从 0 开始自增
+}
+
+public synchronized Long convertAcls(List<ACL> acls) {
+    if (acls == null) {
+        return OPEN_UNSAFE_ACL_ID;  // null → -1
+    }
+    
+    // 先查缓存，避免重复
+    Long ret = aclKeyMap.get(acls);
+    if (ret == null) {
+        ret = incrementIndex();  // 生成新 ID (1, 2, 3...)
+        longKeyMap.put(ret, acls);
+        aclKeyMap.put(acls, ret);
+    }
+    
+    addUsage(ret);  // 增加引用计数
+    return ret;
+}
+```
+
+
+## 🎯 完整流程图
+
+```
+┌─────────────────────────────────────────────────────┐
+│  通过long ID 查找 ACL                               │
+└─────────────────────────────────────────────────────┘
+                      ↓
+         ┌────────────────────────┐
+         │   ID == null?          │──YES──→ return null
+         └────────────────────────┘
+                      ↓ NO
+         ┌────────────────────────┐
+         │   ID == -1?            │──YES──→ return OPEN_ACL_UNSAFE
+         └────────────────────────┘      [(world, anyone)]
+                      ↓ NO
+         ┌────────────────────────┐
+         │ longKeyMap.get(ID)     │
+         └────────────────────────┘
+                      ↓
+         ┌────────────────────────┐
+         │   存在？               │──NO──→ throw RuntimeException
+         └────────────────────────┘
+                      ↓ YES
+         ┌────────────────────────┐
+         │   return ACL List      │
+         └────────────────────────┘
+```
+
+
+## 💡 实际使用场景
+
+在 `DataTree` 中，每个 `DataNode` 存储的是 ACL 的 long ID：
+
+```java
+// DataNode 中存储的是 aclId (long 类型)
+class DataNode {
+    private volatile int aclId;  // 不是直接存储 ACL 列表
+    
+    public int getAclId() {
+        return aclId;
+    }
+}
+
+// 使用时通过 aclCache 转换
+List<ACL> acls = aclCache.convertLong(node.getAclId());
+```
+
+
+## ⚠️ 重要注意事项
+
+### **1. 双向映射一致性**
+```java
+// 必须同时维护两个 map 的一致性
+longKeyMap.put(ret, acls);   // ID → ACL
+aclKeyMap.put(acls, ret);    // ACL → ID
+```
+
+
+### **2. 引用计数管理**
+```java
+// 添加使用时，引用计数 +1
+public synchronized void addUsage(Long acl) {
+    if (acl == OPEN_UNSAFE_ACL_ID) return;
+    
+    AtomicLong count = referenceCounter.get(acl);
+    if (count == null) {
+        referenceCounter.put(acl, new AtomicLongWithEquals(1));
+    } else {
+        count.incrementAndGet();
+    }
+}
+
+// 移除使用时，引用计数 -1，≤0 时清理
+public synchronized void removeUsage(Long acl) {
+    long newCount = referenceCounter.get(acl).decrementAndGet();
+    if (newCount <= 0) {
+        referenceCounter.remove(acl);
+        aclKeyMap.remove(longKeyMap.get(acl));
+        longKeyMap.remove(acl);
+    }
+}
+```
+
+
+### **3. 序列化/反序列化规则**
+
+```java
+// 反序列化时，-1 不会被保存到文件
+public void deserialize(InputArchive ia) throws IOException {
+    clear();
+    int i = ia.readInt("map");  // 读取 ACL 数量
+    
+    while (i > 0) {
+        Long val = ia.readLong("long");  // 读取 ID (从 1 开始)
+        List<ACL> aclList = new ArrayList<>();
+        // 读取 ACL 列表...
+        
+        deserializedMap.put(val, aclList);
+        i--;
+    }
+    
+    // 恢复映射关系，但引用计数初始化为 0
+    referenceCounter.put(val, new AtomicLongWithEquals(0));
+}
+```
+
+
+## 📊 内存优化设计
+
+这个设计的巧妙之处在于：
+
+1. **节省内存**：多个节点共享同一份 ACL，只存 ID（8 字节）而不是完整的 ACL 对象
+2. **快速查找**：HashMap O(1) 时间复杂度
+3. **自动回收**：引用计数为 0 时自动清理无用 ACL
+4. **特殊优化**：`-1` 作为特殊值，不占用缓存空间
+
+## 🎬 使用示例
+
+```java
+// 创建节点时设置 ACL
+List<ACL> acls = ZooDefs.Ids.CREATOR_ALL_ACL;  // [(auth, "")]
+Long aclId = aclCache.convertAcls(acls);       // 返回 1
+dataNode.setAclId(aclId);                      // 存储 ID
+
+// 读取节点权限时
+Long aclId = dataNode.getAclId();              // 获取 ID (1)
+List<ACL> acls = aclCache.convertLong(aclId);  // 还原 ACL
+```
+
+
+这就是 ZooKeeper 通过long ID 查找 ACL 的完整规则和机制！

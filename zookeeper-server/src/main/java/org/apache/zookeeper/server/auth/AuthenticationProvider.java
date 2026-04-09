@@ -69,6 +69,12 @@ public interface AuthenticationProvider {
      * identify a client even though sometimes they do.
      *
      * @return true if this provider identifies creators.
+     *
+     * 是否用于识别创建者
+     * 使用场景:
+     *  判断该认证提供者是否能唯一标识客户端身份
+     *  用于决定是否可以作为节点的创建者 (creator)
+     *  在 auth ACL 展开时起作用
      */
     boolean isAuthenticated();
 

@@ -27,7 +27,7 @@ import org.apache.zookeeper.server.ServerCnxn;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class DigestAuthenticationProvider implements AuthenticationProvider {
+public class  DigestAuthenticationProvider implements AuthenticationProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(DigestAuthenticationProvider.class);
 

@@ -164,7 +164,7 @@ public class FileSnap implements SnapShot {
         if (!foundValid) {
             throw new IOException("Not able to find valid snapshots in " + snapDir);
         }
-        //最新的zxid
+        //最新的快照文件的zxid
         dt.lastProcessedZxid = snapZxid;
         lastSnapshotInfo = new SnapshotInfo(dt.lastProcessedZxid, snap.lastModified() / 1000);
 

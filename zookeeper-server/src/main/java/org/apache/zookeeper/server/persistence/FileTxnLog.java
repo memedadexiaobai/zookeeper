@@ -266,7 +266,56 @@ public class FileTxnLog implements TxnLog, Closeable {
               return append(hdr, txn, null);
     }
 
-    @Override
+    /**
+     * 数据写入的三个阶段
+     *  阶段 1: append() - 写入内存缓冲区 ❌未落盘
+     *    // append() 方法中
+     *    logStream = new BufferedOutputStream(fos);  // 创建缓冲流
+     *    oa.writeLong(crc.getValue(), "txnEntryCRC"); // 写入缓冲区
+     *    Util.writeTxnBytes(oa, buf);                 // 写入缓冲区
+     *    状态: 数据在 Java 堆内存的 BufferedOutputStream 中
+     *  阶段 2: {@link #commit()} 刷新到操作系统缓存 ⚠️可能未落盘
+     *  阶段 3: channel.force() - 真正写入磁盘 ✅已落盘
+     *    只有当 forceSync = true 时才会执行，这会触发操作系统的 fsync() 系统调用。
+     *
+     * append() → commit() → [可选] forceSync
+     *   ↓          ↓              ↓
+     * 内存缓冲  OS 缓存        磁盘 (真正落盘)
+     *
+     * 1️⃣ append() 方法执行后 - 数据在 Java 内存缓冲区
+     * logStream = new BufferedOutputStream(fos);  // 创建带缓冲的输出流
+     * oa.writeLong(crc.getValue(), "txnEntryCRC"); // 写入 CRC 校验和到缓冲区
+     * Util.writeTxnBytes(oa, buf);                 // 写入事务数据到缓冲区
+     * ✅ Adler32 校验和已计算并写入缓冲区 ❌ 但数据还在 Java 进程的内存中，未到达磁盘
+     *
+     * 2️⃣ commit() 方法调用后 - 数据推到操作系统缓存
+     * public synchronized void commit() throws IOException {
+     *     logStream.flush();  // 将 Java 缓冲区数据推到操作系统的文件缓存
+     *     for (FileOutputStream log : streamsToFlush) {
+     *         log.flush();    // 确保数据到达操作系统缓存
+     * ⚠️ 数据在操作系统的 Page Cache 中，如果此时宕机可能丢失
+     *
+     * 3️⃣ forceSync=true 时 - 真正写入磁盘
+     * if (forceSync) {
+     *     FileChannel channel = log.getChannel();
+     *     channel.force(false);  // 调用 fsync() 强制写入磁盘
+     * }
+     * ✅ 数据真正持久化到磁盘，即使宕机也不会丢失
+     *
+     * 🔧 控制参数：forceSync
+     * private final boolean forceSync = !System.getProperty("zookeeper.forceSync", "yes").equals("no");
+     * 默认值: true (通过 JVM 系统属性 zookeeper.forceSync 控制)
+     * zookeeper.forceSync=yes (默认): 每次 commit 都调用 fsync，保证数据不丢失
+     * zookeeper.forceSync=no: 不调用 fsync，依赖操作系统刷盘，性能更好但有数据丢失风险
+     *
+     * 在 ZooKeeper 的写入流程中：
+     *  Leader 接收写请求 → append() 追加到内存
+     *  事务提交 → commit() 刷新到 OS 缓存
+     *  如果开启 forceSync → fsync() 确保落盘
+     *  同时通过网络同步给 Follower
+     *  多数派确认后返回客户端成功
+     */
+    @Override //这个过程数据还在内存缓存中 并未落盘
     public synchronized boolean append(TxnHeader hdr, Record txn, TxnDigest digest) throws IOException {
         if (hdr == null) {
             return false;
@@ -285,8 +334,9 @@ public class FileTxnLog implements TxnLog, Closeable {
 
             logFileWrite = new File(logDir, Util.makeLogName(hdr.getZxid()));
             fos = new FileOutputStream(logFileWrite);
-            logStream = new BufferedOutputStream(fos);
+            logStream = new BufferedOutputStream(fos); // 创建缓冲流
             oa = BinaryOutputArchive.getArchive(logStream);
+            // 这只是放了个文件头 数据还没刷呢
             FileHeader fhdr = new FileHeader(TXNLOG_MAGIC, VERSION, dbId);
             fhdr.serialize(oa, "fileheader");
             // Make sure that the magic number is written before padding.
@@ -314,30 +364,55 @@ public class FileTxnLog implements TxnLog, Closeable {
      * @param logDirList array of files
      * @param snapshotZxid return files at, or before this zxid
      * @return log files that starts at, or just before, the snapshot and subsequent ones
+     * 查找包含指定 snapshotZxid 及之后所有事务的 log 文件集合
+     *
+     * 假设有以下 log 文件（按 zxid 排序）：
+     *  log.100 (起始 zxid = 100)
+     *  log.200 (起始 zxid = 200)
+     *  log.300 (起始 zxid = 300)
+     *  log.400 (起始 zxid = 400)
+     * 调用示例：
+     *   // 场景 1: snapshotZxid = 250
+     *   getLogFiles(files, 250)
+     *   // 返回：[log.200, log.300, log.400]
+     *   // 解释：250 在 log.200 中，需要从这个文件开始恢复
+     *
+     *   // 场景 2: snapshotZxid = 300
+     *   getLogFiles(files, 300)
+     *   // 返回：[log.300, log.400]
+     *   // 解释：从正好包含 300 的文件开始
+     *
+     *   // 场景 3: getLastLoggedZxid() 调用
+     *   getLogFiles(files, 0)
+     *   // 返回：[log.100, log.200, log.300, log.400]
+     *   // 解释：获取所有文件来查找最大的 zxid
      */
     public static File[] getLogFiles(File[] logDirList, long snapshotZxid) {
+        // 1. 将 log 文件按 zxid 升序排序
         List<File> files = Util.sortDataDir(logDirList, LOG_FILE_PREFIX, true);
         long logZxid = 0;
         // Find the log file that starts before or at the same time as the
         // zxid of the snapshot
+        // 2. 找到起始 zxid <= snapshotZxid 的最大 zxid 对应的文件
         for (File f : files) {
             long fzxid = Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX);
             if (fzxid > snapshotZxid) {
-                break;
+                break; // 超过 snapshotZxid 就停止
             }
             // the files
             // are sorted with zxid's
             if (fzxid > logZxid) {
-                logZxid = fzxid;
+                logZxid = fzxid;  // 记录不超过 snapshotZxid 的最大 zxid
             }
         }
+        // 3. 返回从该文件开始的所有后续文件
         List<File> v = new ArrayList<File>(5);
         for (File f : files) {
             long fzxid = Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX);
             if (fzxid < logZxid) {
-                continue;
+                continue; // 跳过比目标文件更早的文件
             }
-            v.add(f);
+            v.add(f);  // 添加目标文件及其之后的所有文件
         }
         return v.toArray(new File[0]);
 
@@ -352,7 +427,7 @@ public class FileTxnLog implements TxnLog, Closeable {
         long maxLog = files.length > 0 ? Util.getZxidFromName(files[files.length - 1].getName(), LOG_FILE_PREFIX) : -1;
 
         // if a log file is more recent we must scan it to find
-        // the highest zxid
+        // the highest zxid 获取到最新的一个zxid
         long zxid = maxLog;
         try (FileTxnLog txn = new FileTxnLog(logDir); TxnIterator itr = txn.read(maxLog)) {
             while (true) {
@@ -371,18 +446,59 @@ public class FileTxnLog implements TxnLog, Closeable {
     /**
      * commit the logs. make sure that everything hits the
      * disk
+     *
+     * FileOutputStream.flush()
+     *  作用: 将操作系统缓冲区的数据强制写入磁盘
+     *  缓冲位置: 操作系统的 Page Cache（内核缓冲区）
+     *  触发时机: 通常在关闭流或显式调用 flush 时
+     *  性能: 频繁调用会影响性能（系统调用开销大）
+     * BufferedOutputStream.flush()
+     *  作用: 将Java 应用缓冲区的数据推送到下层流（并间接触发下层流的 flush）
+     *  缓冲位置: Java 堆内存中的字节数组缓冲区
+     *  触发时机: 缓冲区满、手动调用 flush、或关闭流时
+     *  性能: 减少系统调用次数，提高 I/O 效率
+     *
+     * Java 应用空间                    操作系统内核空间                    磁盘
+     * ┌─────────────┐              ┌─────────────────┐              ┌──────────┐
+     * │   Heap      │              │   Page Cache    │              │          │
+     * │  ┌───────┐  │  write()     │  ┌───────────┐  │  fsync()     │  文件    │
+     * │  │Buffer │───────────────>│  │ OS Buffer │───────────────>│          │
+     * │  │(8KB)  │  │ flush()      │  │           │  │ force(false)│          │
+     * │  └───────┘  │              │  └───────────┘  │              │          │
+     * └─────────────┘              └─────────────────┘              └──────────┘
+     *      ↑                            ↑                                ↑
+     *      │                            │                                │
+     * BufferedOutputStream       FileOutputStream                    物理磁盘
+     * flush()                    flush()
+     * 清空 Java 缓冲区            触发内核刷新
+     * 调用 fos.flush()
+     *
+     * | 特性 | FileOutputStream.flush() | BufferedOutputStream.flush() |
+     * |------|-------------------------|------------------------------|
+     * | **缓冲位置** | 操作系统内核缓冲区 (Page Cache) | Java 堆内存字节数组 (默认 8KB) |
+     * | **作用** | 请求 OS 将数据写入磁盘 | 将 Java 缓冲区数据推送到下层流 |
+     * | **系统调用** | 可能触发 `fsync()`/`fdatasync()` | 间接触发下层流的 flush |
+     * | **性能影响** | 较大（用户态→内核态切换） | 较小（纯内存操作） |
+     * | **数据安全性** | 中等（OS 崩溃仍可能丢失） | 低（JVM 崩溃就丢失） |
+     * | **调用时机** | 关闭流、手动调用、或 OS 决定 | 缓冲区满、手动调用、关闭流 |
+     *
+     *
+     * 使用 BufferedOutputStream 的原因：
+     *  减少系统调用: 事务日志是高频写入操作，缓冲可以显著提升性能
+     *  批量写入: 积累多个小事务后一次性推送给 OS
+     *  可控的持久化: 通过显式调用 commit() 控制何时刷新，平衡性能和可靠性
      */
     public synchronized void commit() throws IOException {
         if (logStream != null) {
-            logStream.flush();
+            logStream.flush(); // 将缓冲区数据推到操作系统的文件缓存
         }
         for (FileOutputStream log : streamsToFlush) {
-            log.flush();
-            if (forceSync) {
+            log.flush();   // 确保数据到达操作系统缓存
+            if (forceSync) {  // 可选的强制同步
                 long startSyncNS = System.nanoTime();
 
                 FileChannel channel = log.getChannel();
-                channel.force(false);
+                channel.force(false); // 真正强制写入磁盘
 
                 syncElapsedMS = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startSyncNS);
                 if (syncElapsedMS > fsyncWarningThresholdMS) {
@@ -628,7 +744,7 @@ public class FileTxnLog implements TxnLog, Closeable {
 
             if (fastForward && hdr != null) {
                 while (hdr.getZxid() < zxid) {
-                    if (!next()) {
+                    if (!next()) {//找到zxid对应的log内容
                         break;
                     }
                 }
@@ -651,11 +767,14 @@ public class FileTxnLog implements TxnLog, Closeable {
          * @throws IOException
          */
         void init() throws IOException {
+            //要遍历的文件
             storedFiles = new ArrayList<>();
+            //降序排练
             List<File> files = Util.sortDataDir(
                 FileTxnLog.getLogFiles(logDir.listFiles(), 0),
                 LOG_FILE_PREFIX,
                 false);
+            //zxid对应的内容可能在小一号的log中，因此这里拿到大于zxid的log和小于zxid的第一个log
             for (File f : files) {
                 if (Util.getZxidFromName(f.getName(), LOG_FILE_PREFIX) >= zxid) {
                     storedFiles.add(f);

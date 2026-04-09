@@ -211,6 +211,22 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      * @param multiRequest
      * @return a map that contains previously existed records that probably need to be
      *         rolled back in any failure.
+     *
+     *  用于在MultiRequest 操作失败时，为回滚做准备。
+     *  回滚流程
+     *      配合下面的 rollbackPendingChanges() 方法使用：
+     *        准备阶段（当前方法）：收集所有需要回滚的变更记录
+     *        执行回滚：
+     *          删除本次 MultiRequest 产生的所有新变更记录
+     *          将之前保存的旧记录恢复到 outstandingChangesForPath 中
+     * 假设一个 MultiRequest 包含：
+     *  1. 创建 /a/b/node1（顺序节点）
+     *  2. 删除 /a/c
+     *
+     *  如果第 2 步失败：
+     *   - 需要回滚第 1 步创建的节点
+     *   - 需要恢复 /a 父节点的 ChangeRecord
+     *   - 确保下次创建顺序节点时，/a 的子节点计数是正确的
      */
     private Map<String, ChangeRecord> getPendingChanges(MultiOperationRecord multiRequest) {
         Map<String, ChangeRecord> pendingChangeRecords = new HashMap<String, ChangeRecord>();
@@ -219,6 +235,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             String path = op.getPath();
             ChangeRecord cr = getOutstandingChange(path);
             // only previously existing records need to be rolled back.
+            // 检查该路径是否已有未完成的变更（outstanding change）
+            // 如果有，保存到 pendingChangeRecords 中，以便后续回滚时使用
             if (cr != null) {
                 pendingChangeRecords.put(path, cr);
             }
@@ -229,16 +247,44 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
              * sequential node creation request, rollbackPendingChanges()
              * can restore previous parent's ChangeRecord correctly.
              *
-             * Otherwise, sequential node name generation will be incorrect
+             * Otherwise, sequential(顺序) node name generation will be incorrect
              * for a subsequent request.
+             * 💡 为什么需要保存父节点？
+                    对于**顺序节点（sequential node）**的创建操作，需要从父节点获取当前子节点计数来生成下一个顺序号
+                    如果 MultiRequest 失败需要回滚，必须恢复父节点的正确状态
+                    否则，后续请求在创建顺序节点时会生成错误的节点名
              */
             int lastSlash = path.lastIndexOf('/');
+            /**
+             * \0 是 空字符（null character），也称为空字节。
+             * 这行代码检查路径字符串中是否包含空字符 \0。
+             * 为什么 ZooKeeper 要检查 \0？
+             *  这是一个安全验证机制：
+             *  🔒 防止非法路径
+             *    空字符 \0 在路径中是非法的
+             *    某些系统（特别是 Unix/Linux）使用 \0 作为字符串终止符
+             *    如果允许包含 \0 的路径，可能导致：
+             *      字符串截断攻击
+             *      路径解析歧义
+             *      安全漏洞
+             *  // 合法路径
+             * String path1 = "/zookeeper/data";  // indexOf('\0') = -1 ✓
+             *
+             * // 非法路径（包含空字符）
+             * String path2 = "/zookeeper\0data";  // indexOf('\0') = 10 ✗
+             * // 在某些系统中，这个路径可能被截断为 "/zookeeper"
+             *
+             * \0 = 空字符（ASCII 值为 0 的字符）
+             * ZooKeeper 检查它的原因是：确保路径合法性，防止潜在的安全问题。这是输入验证的重要一环！
+             */
             if (lastSlash == -1 || path.indexOf('\0') != -1) {
                 continue;
             }
             String parentPath = path.substring(0, lastSlash);
             ChangeRecord parentCr = getOutstandingChange(parentPath);
             if (parentCr != null) {
+                // 提取父节点路径
+                // 同样保存父节点的未完成变更
                 pendingChangeRecords.put(parentPath, parentCr);
             }
         }
@@ -262,9 +308,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             Iterator<ChangeRecord> iter = zks.outstandingChanges.descendingIterator();
             while (iter.hasNext()) {
                 ChangeRecord c = iter.next();
-                if (c.zxid == zxid) {
-                    iter.remove();
-                    // Remove all outstanding changes for paths of this multi.
+                if (c.zxid == zxid) {// 如果当前 ChangeRecord 的 zxid 与失败的 MultiRequest 的 zxid 相同，则说明该变更记录是失败的 MultiRequest 的一部分
+                    iter.remove(); // 移除变变更失败的ChangeRecord
+                    // Remove all outstanding changes(未完成的更改) for paths of this multi.
                     // Previous records will be added back later.
                     zks.outstandingChangesForPath.remove(c.path);
                 } else {
@@ -335,12 +381,13 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             String path = new String(request.request.array(), UTF_8);
             String parentPath = getParentPathAndValidate(path);
             ChangeRecord nodeRecord = getRecordForPath(path);
-            if (nodeRecord.childCount > 0) {
+            if (nodeRecord.childCount > 0) {// 如果该节点有子节点，禁止删除
                 throw new KeeperException.NotEmptyException(path);
             }
             if (EphemeralType.get(nodeRecord.stat.getEphemeralOwner()) == EphemeralType.NORMAL) {
                 throw new KeeperException.BadVersionException(path);
             }
+
             ChangeRecord parentRecord = getRecordForPath(parentPath);
             request.setTxn(new DeleteTxn(path));
             parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
@@ -517,6 +564,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 request.qv = new QuorumMaj(nextServers);
                 request.qv.setVersion(request.getHdr().getZxid());
             }
+
             if (QuorumPeerConfig.isStandaloneEnabled() && request.qv.getVotingMembers().size() < 2) {
                 String msg = "Reconfig failed - new configuration must include at least 2 followers";
                 LOG.warn(msg);
@@ -590,9 +638,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                 // synchronized block, otherwise there will be a race
                 // condition with the on flying deleteNode txn, and we'll
                 // delete the node again here, which is not correct
+                // 获取该会话的所有临时节点
                 Set<String> es = zks.getZKDatabase().getEphemerals(request.sessionId);
+                // 遍历 outstandingChanges，处理未提交的变更
                 for (ChangeRecord c : zks.outstandingChanges) {
-                    if (c.stat == null) {
+                    // 用一个 null 值优雅地解决了分布式系统中的删除语义问题！
+                    if (c.stat == null) {// stat 字段为 null 只有一种情况：节点被删除时！
                         // Doing a delete
                         es.remove(c.path);
                     } else if (c.stat.getEphemeralOwner() == request.sessionId) {
@@ -632,6 +683,68 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             validatePath(path, request.sessionId);
             nodeRecord = getRecordForPath(path);
             zks.checkACL(request.cnxn, nodeRecord.acl, ZooDefs.Perms.READ, request.authInfo, path, null);
+            /**
+             * Check 操作主要用于 MultiTransaction（复合事务） 中，实现乐观锁机制：
+             *  // 示例：转账操作（需要同时检查两个账户）
+             * List<Op> ops = Arrays.asList(
+             *     Op.check("/account/A", versionA),  // 检查 A 账户版本
+             *     Op.check("/account/B", versionB),  // 检查 B 账户版本
+             *     Op.setData("/account/A", newBalanceA, -1),  // 更新 A 账户
+             *     Op.setData("/account/B", newBalanceB, -1)   // 更新 B 账户
+             * );
+             * zk.multi(ops);
+             * 为什么 version 要 +1？
+             *  ❌ 如果 Check 不增加 version：
+             *  场景：MultiTransaction 包含多个操作
+             *      1. Op.check("/A", version=5)    // 检查版本是 5
+             *      2. Op.setData("/B", data, -1)   // 更新 B 节点（version 会变成 6）
+             *
+             *  问题：
+             *      - Check 操作只是"读取"验证，不修改数据
+             *      - 如果 Check 不增加 version，那么它不会在事务日志中留下任何痕迹
+             *      - 后续重放事务时，无法知道这个 Check 操作曾经发生过
+             *      - 导致主备节点的数据状态可能不一致
+             * ✅ **Check 增加 version 的好处：
+             *  1. 保证事务的可追溯性
+             *      // PrepRequestProcessor.java L682-684
+             *      request.setTxn(new CheckVersionTxn(
+             *     path,
+             *     checkAndIncVersion(nodeRecord.stat.getVersion(), checkVersionRequest.getVersion(), path)));
+             *      // ↑ 这里 version+1 会被写入事务日志
+             *  2. 确保 MultiTransaction 的原子性
+             *      假设 MultiTransaction 包含：
+             *      - Op1: check("/A", v=5)      → version 变成 6
+             *      - Op2: setData("/B", data)   → version 变成 X
+             *
+             *      如果 Op2 失败：
+             *          - 整个事务回滚
+             *          - /A 节点的 version 也会回滚到 5
+             *          - 保证"全有或全无"的语义
+             *  3. 保持事务日志的完整性
+             *      // DataTree.java L974-977
+             *      case OpCode.check:
+             *          CheckVersionTxn checkTxn = (CheckVersionTxn) txn;
+             *          rc.path = checkTxn.getPath();
+             *          break;
+             *      // ↑ Check 操作会被记录和处理，虽然不修改实际数据
+             *  | 操作类型 | 是否修改数据 | version 变化 | 写入日志 |
+             * |---------|------------|------------|---------|
+             * | `getData()` | ❌ | ❌ | ❌ |
+             * | `exists()` | ❌ | ❌ | ❌ |
+             * | **`check()`** | ❌ | ✅ **+1** | ✅ |
+             * | `setData()` | ✅ | ✅ +1 | ✅ |
+             * | `delete()` | ✅ | ✅ 删除 | ✅ |
+             * | `create()` | ✅ | ✅ 创建 | ✅ |
+             *
+             * Check 操作的 version+1 是一种"逻辑变更"而非"物理变更"：
+             *
+             * - ✅ **验证功能**：检查客户端期望的版本是否正确（CAS 操作）
+             * - ✅ **留痕**：通过 version+1 在事务日志中留下记录
+             * - ✅ **原子性**：在 MultiTransaction 中保证所有操作的原子性
+             * - ✅ **可重放**：确保事务重放时能正确还原历史状态
+             *
+             * 这正是 ZooKeeper 设计的精妙之处：**即使是只读验证操作，也要通过 version+1 来保证分布式系统的一致性和可追溯性！** 🎯
+             */
             request.setTxn(new CheckVersionTxn(
                 path,
                 checkAndIncVersion(nodeRecord.stat.getVersion(), checkVersionRequest.getVersion(), path)));
@@ -673,16 +786,100 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             data = createRequest.getData();
             ttl = -1;
         }
+        //获取创建节点的类型
         CreateMode createMode = CreateMode.fromFlag(flags);
         validateCreateRequest(path, createMode, request, ttl);
         String parentPath = validatePathForCreate(path, request.sessionId);
 
+        //如果是auth的话，把 request.authInfo 即客户端支持的acl信息添加到列表中
         List<ACL> listACL = fixupACL(path, request.authInfo, acl);
         ChangeRecord parentRecord = getRecordForPath(parentPath);
 
         zks.checkACL(request.cnxn, parentRecord.acl, ZooDefs.Perms.CREATE, request.authInfo, path, listACL);
+        /**
+         * cversion 是什么？
+         *  定义：cversion = children version（子节点版本号）
+         *  作用：记录父节点被创建/删除子节点的次数
+         *  初始值：0
+         *  递增规则：每创建一个子节点，父节点的 cversion + 1
+         * 顺序节点命名规则
+         *  当创建顺序节点时，ZooKeeper 会自动在节点路径后面追加一个10 位数字
+         *  String prefix = "/myapp/task-";  // 客户端指定的前缀
+         *  // 假设父节点的 cversion = 5
+         *  String sequentialPath = "/myapp/task-0000000005";
+         * //                                ↑ 10 位数字，不足补 0
+         * 为什么要用 cversion？
+         *  保证唯一性和有序性：
+         *  每次创建子节点，cversion 都会递增
+         *  使用 cversion 作为序号，确保每个顺序节点的名字都不同
+         *  序号反映了创建的先后顺序
+         *  ┌──────────────────────────────────────────────────┐
+         * │  客户端请求：创建顺序节点                         │
+         * │  path = "/myapp/node-"                           │
+         * │  createMode = PERSISTENT_SEQUENTIAL             │
+         * └──────────────────────────────────────────────────┘
+         *                       ↓
+         * ┌──────────────────────────────────────────────────┐
+         * │  PrepRequestProcessor.pRequest2TxnCreate()       │
+         * └──────────────────────────────────────────────────┘
+         *                       ↓
+         * ┌──────────────────────────────────────────────────┐
+         * │  1. 获取父节点的 cversion                        │
+         * │     int parentCVersion = parentRecord.stat.getCversion(); │
+         * │     假设 = 7                                      │
+         * └──────────────────────────────────────────────────┘
+         *                       ↓
+         * ┌──────────────────────────────────────────────────┐
+         * │  2. 判断是否是顺序节点                           │
+         * │     if (createMode.isSequential())              │
+         * └──────────────────────────────────────────────────┘
+         *                       ↓ YES
+         * ┌──────────────────────────────────────────────────┐
+         * │  3. 生成完整路径                                 │
+         * │     path = "/myapp/node-" + "%010d" formatted   │
+         * │          = "/myapp/node-0000000007"             │
+         * └──────────────────────────────────────────────────┘
+         *                       ↓
+         * ┌──────────────────────────────────────────────────┐
+         * │  4. 父节点 cversion + 1                          │
+         * │     newCversion = 7 + 1 = 8                     │
+         * │     (为下一个顺序节点做准备)                     │
+         * └──────────────────────────────────────────────────┘
+         * 实际应用场景:
+         *  场景 1：分布式锁
+         *  // Java 客户端代码
+         * String lockPath = zk.create("/locks/lock-", data, acl, CreateMode.PERSISTENT_SEQUENTIAL);
+         * // 可能返回：/locks/lock-0000000000
+         * //          /locks/lock-0000000001
+         * //          /locks/lock-0000000002
+         * 场景 2：任务队列
+         * // 创建任务节点
+         * String taskPath = zk.create("/queue/task-", taskData, acl,
+         *                             CreateMode.PERSISTENT_SEQUENTIAL);
+         * // 返回：/queue/task-0000000003
+         */
         int parentCVersion = parentRecord.stat.getCversion();
         if (createMode.isSequential()) {
+            /**
+             * String.format(Locale.ENGLISH, "%010d", parentCVersion)
+             * // %010d 含义：
+             * // %      - 格式化起始符
+             * // 0      - 不足时用 0 填充
+             * // 10     - 总宽度为 10 位
+             * // d      - 十进制整数
+             * 为什么是 10 位？
+             *  ZooKeeper 规范规定顺序节点后缀固定为 10 位数字
+             *  保证所有节点名称长度一致，便于排序和管理
+             * 并发安全
+             *  由于 PrepRequestProcessor 是单线程处理请求的（第 810 行注释说明），所以：
+             *  不会出现两个请求同时获取同一个 cversion 的情况
+             *  保证了顺序节点名称的唯一性
+             * 以下 CreateMode 会触发顺序命名：
+             *  CreateMode.PERSISTENT_SEQUENTIAL      // 持久顺序
+             *  CreateMode.EPHEMERAL_SEQUENTIAL       // 临时顺序
+             *  CreateMode.CONTAINER                  // 容器（不支持顺序）
+             *  CreateMode.PERSISTENT_TTL_SEQUENTIAL  // TTL 顺序
+             */
             path = path + String.format(Locale.ENGLISH, "%010d", parentCVersion);
         }
         validatePath(path, request.sessionId);
@@ -699,6 +896,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         }
         int newCversion = parentRecord.stat.getCversion() + 1;
         zks.checkQuota(path, null, data, OpCode.create);
+
         if (type == OpCode.createContainer) {
             request.setTxn(new CreateContainerTxn(path, data, listACL, newCversion));
         } else if (type == OpCode.createTTL) {
@@ -716,6 +914,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         } else if (createMode.isEphemeral()) {
             ephemeralOwner = request.sessionId;
         }
+        // hdr.getZxid() 这个是本次操作的zxid标识，由Zookeeper生成，单调递增
         StatPersisted s = DataTree.createStat(hdr.getZxid(), hdr.getTime(), ephemeralOwner);
         parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
         parentRecord.childCount++;
@@ -724,6 +923,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
         parentRecord.precalculatedDigest = precalculateDigest(
                 DigestOpCode.UPDATE, parentPath, parentRecord.data, parentRecord.stat);
         addChangeRecord(parentRecord);
+
         ChangeRecord nodeRecord = new ChangeRecord(
                 request.getHdr().getZxid(), path, s, 0, listACL);
         nodeRecord.data = data;
@@ -787,6 +987,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      */
     private void pRequestHelper(Request request) throws RequestProcessorException {
         try {
+            //每处理一个事务，zxid +1
             switch (request.type) {
             case OpCode.createContainer:
             case OpCode.create:
@@ -829,7 +1030,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     throw e;
                 }
                 List<Txn> txns = new ArrayList<Txn>();
-                //Each op in a multi-op must have the same zxid!
+                //Each op in a multi-op must have the same zxid! 多个操作共享一个zxid
                 long zxid = zks.getNextZxid();
                 KeeperException ke = null;
 
@@ -843,9 +1044,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     int type;
                     Record txn;
 
-                    /* If we've already failed one of the ops, don't bother
-                     * trying the rest as we know it's going to fail and it
-                     * would be confusing in the logfiles.
+                    /* If we've already failed one of the ops,
+                     * don't bother trying the rest as we know it's going to fail and it
+                     * would be confusing(混乱的) in the logfiles.
                      */
                     if (ke != null) {
                         type = OpCode.error;
@@ -947,14 +1148,15 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             StringBuilder sb = new StringBuilder();
             ByteBuffer bb = request.request;
             if (bb != null) {
-                bb.rewind();
+                bb.rewind();// 会修改 position 为 0， 重置缓冲区位置到开头
                 while (bb.hasRemaining()) {
-                    sb.append(Integer.toHexString(bb.get() & 0xff));
+                    sb.append(Integer.toHexString(bb.get() & 0xff));  // 逐字节读取并转换为十六进制
                 }
             } else {
                 sb.append("request buffer is null");
             }
 
+            // 以十六进制格式输出请求缓冲区内容
             LOG.error("Dumping request buffer: 0x{}", sb.toString());
             if (request.getHdr() != null) {
                 request.getHdr().setType(OpCode.error);
@@ -1029,6 +1231,21 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
             }
             if (id.getScheme().equals("world") && id.getId().equals("anyone")) {
                 rv.add(a);
+                /**
+                 * "auth" 是一个特殊的占位符 scheme，它的作用是：
+                 *      动态扩展：当你在设置 ACL 时使用 ZooDefs.Ids.AUTH_IDS（scheme 为 "auth"），
+                 *          ZooKeeper 会在运行时将其替换为客户端实际认证的所有 ID
+                 *     不是真实 provider：你可以在 ZooDefs.java 看到定义：   Id AUTH_IDS = new Id("auth", "");
+                 *     处理逻辑特殊：在 PrepRequestProcessor 中，"auth" scheme 不走正常的 ProviderRegistry 查找流程，
+                 *      而是直接遍历客户端的 authInfo 列表，将所有已认证的 ID 添加到 ACL 中
+                 * 真实的 authentication provider：
+                 *  digest - DigestAuthenticationProvider (第 66 行返回 "digest")
+                 *  ip - IPAuthenticationProvider (第 28 行返回 "ip")
+                 *  sasl - SASL 认证 (在 AuthenticationHelper 中定义)
+                 *  x509 - X509 证书认证
+                 *  ensemble - Ensemble 认证 (测试中使用)
+                 *  world - 特殊 scheme，代表任何人
+                 */
             } else if (id.getScheme().equals("auth")) {
                 // This is the "auth" id, so we have to expand it to the
                 // authenticated ids of the requestor
@@ -1037,7 +1254,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
                     ServerAuthenticationProvider ap = ProviderRegistry.getServerProvider(cid.getScheme());
                     if (ap == null) {
                         LOG.error("Missing AuthenticationProvider for {}", cid.getScheme());
-                    } else if (ap.isAuthenticated()) {
+                    } else if (ap.isAuthenticated()) { // ← 只有能标识创建者的才有效
                         authIdValid = true;
                         rv.add(new ACL(a.getPerms(), cid));
                     }
@@ -1121,6 +1338,63 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements Req
      * Query the current tree digest from DataTree or outstandingChanges list.
      *
      * @return current tree digest
+     *
+     * 解决了并发场景下树摘要（tree digest）的准确性问题
+     * 📊 核心原因：存在未提交的变更
+     * 场景分析
+     *  ZooKeeper 在处理请求时，变更是分阶段进行的：
+     *      1. PrepRequestProcessor 阶段 → 生成 ChangeRecord，放入 outstandingChanges
+     *      2. CommitProcessor 阶段     → 等待事务提交
+     *      3. FinalRequestProcessor   → 真正应用到 DataTree
+     *  关键问题
+     *      当 precalculateDigest() 计算新操作的树摘要时：
+     *          long treeDigest = getCurrentTreeDigest() - prevNodeDigest + newNodeDigest;
+     *      它需要知道当前最新的树摘要，但这个"当前"包含了两种情况：
+     *  🎯 两种情况的处理逻辑
+     *      情况 1：没有未完成的变更
+     *      if (zks.outstandingChanges.isEmpty()) {
+     *          digest = zks.getZKDatabase().getDataTree().getTreeDigest();
+     *      }
+     *      说明：
+     *          outstandingChanges 为空，表示所有之前的操作都已提交到 DataTree
+     *          此时直接从 DataTree 获取最新的树摘要是准确的
+     *     情况 2：有未完成的变更
+     *     else {
+     *          digest = zks.outstandingChanges.peekLast().precalculatedDigest.treeDigest;
+     *      }
+     *     说明：
+     *      outstandingChanges 非空，表示有已预处理但尚未提交的操作
+     *      最后一个 ChangeRecord 中保存的 treeDigest 代表了包含所有未完成变更后的树摘要
+     *      这个值比 DataTree 中的更新、更准确
+     * 🔬 为什么用 peekLast()？
+     *      假设依次执行 3 个操作：
+     *        | 操作 | 描述 | DataTree digest | outstandingChanges 最后的 digest |
+     *        |------|------|-----------------|----------------------------------|
+     *        | 初始 | - | 1000 | - |
+     *        | Op1 | 创建节点 A | 1000（未提交）| 1050（包含 Op1）|
+     *        | Op2 | 更新节点 B | 1000（未提交）| 1080（包含 Op1+Op2）|
+     *        | Op3 | 删除节点 C | 1000（未提交）| **1060（包含 Op1+Op2+Op3）** |
+     * 当处理 Op4 时：
+     *   DataTree 的 digest 仍是 1000（过时的）
+     *   outstandingChanges.peekLast() 的 digest 是 1060（最新的）
+     * 所以必须从 最后一个 ChangeRecord 获取！
+     *
+     * ✅ 设计优势
+     *   保证连续性：每个新操作的摘要计算都基于前面所有操作的累积结果
+     *   避免竞态条件：通过 synchronized 锁保证读取的一致性
+     *   高效：不需要遍历所有 outstanding changes，直接取最后一个即可
+     *
+     * ┌─────────────────────────────────────────┐
+     * │  为什么这样取值？                        │
+     * ├─────────────────────────────────────────┤
+     * │  因为存在"已预处理但未提交"的变更        │
+     * │                                         │
+     * │  • 无未完成变更 → 从 DataTree 取        │
+     * │  • 有未完成变更 → 从最后一个 Record 取  │
+     * │                                         │
+     * │  目的：确保获取的是最新、最准确的树摘要  │
+     * └─────────────────────────────────────────┘
+     * 这是 ZooKeeper 为了实现**精确的数据一致性校验**而设计的精妙机制！
      */
     private long getCurrentTreeDigest() {
         long digest;

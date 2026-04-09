@@ -520,6 +520,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
          * ZooKeeperServer#startdata.
          *
          * See ZOOKEEPER-1642 for more detail.
+         * 设置最新的zxid
          */
         if (zkDb.isInitialized()) {
             setZxid(zkDb.getDataTreeLastProcessedZxid());
@@ -718,9 +719,11 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         if (sessionTracker == null) {
             createSessionTracker();
         }
+        //会话管理
         startSessionTracker();
+        //请求处理器启动
         setupRequestProcessors();
-
+        //启动限流器 经过限流器的请求放入请求处理器
         startRequestThrottler();
 
         registerJMX();
@@ -978,6 +981,58 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
 
         List<ACL> acl; /* Make sure to create a new object when changing */
 
+        /**
+         * 1. 不可变性 (Immutability) 保证
+         *  StatPersisted stat; Make sure to create a new object when changing
+         *  List<ACL> acl;  Make sure to create a new object when changing
+         *  这两个字段在修改时必须创建新对象，这是函数式编程的不可变模式。这样做的好处是：
+         *      避免多个引用指向同一个对象导致的数据污染
+         *      保证线程安全
+         *      便于回滚和快照
+         * 2. 只更新需要的字段
+         *  duplicate 方法的核心思想是复制 - 修改 (Copy-on-Modify) 模式：
+         *  保留不变的字段：path、childCount、data、precalculatedDigest 直接引用（因为这些不需要改或后续会重新设置）
+         *  创建新对象的字段：stat 和 acl 必须创建新对象（因为会被修改）
+         *  更新的字段：zxid 会被传入的新值替换
+         * 3. 使用场景分析
+         *  // 删除节点时
+         *  parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
+         *  parentRecord.childCount--;
+         *  parentRecord.stat.setPzxid(request.getHdr().getZxid());
+         *
+         *  // 更新数据时
+         *  nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
+         *  nodeRecord.stat.setVersion(newVersion);
+         *  nodeRecord.stat.setMtime(request.getHdr().getTime());
+         *  nodeRecord.data = setDataRequest.getData();
+         *
+         *  // 创建节点时
+         *  parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
+         *  parentRecord.childCount++;
+         *  parentRecord.stat.setCversion(newCversion);
+         *  每次操作都：
+         *      通过 duplicate() 创建一个带新 zxid 的副本
+         *      只修改需要变更的字段
+         *      保持原始记录不变（用于 outstandingChanges 追踪）
+         * 4. 为什么 data 和 precalculatedDigest 直接引用？
+         *   changeRecord.data = data;
+         *   changeRecord.precalculatedDigest = precalculatedDigest;
+         *   data 是 byte[]，本身是不可变的引用类型
+         *   precalculatedDigest 会在后续需要时重新计算并覆盖
+         *   直接引用避免不必要的对象创建，提高性能
+         * 5. 为什么 acl 要创建新 ArrayList？
+         *  acl == null ? new ArrayList<>() : new ArrayList<>(acl)
+         *  ACL 列表可能会被修改（添加/删除权限）
+         *  创建新的 ArrayList 保证原记录的 ACL 不被影响
+         *  即使底层的 ACL 对象本身可能共享，但列表结构是独立的
+         * 总结：
+         *  这种设计体现了 ZooKeeper 的事务日志和快照机制的核心思想：
+         *   ✅ 线程安全：单线程处理请求 + 不可变对象
+         *   ✅ 可追溯性：outstandingChanges 队列中保存了所有未提交的变更记录
+         *   ✅ 高效性：只复制需要修改的部分，其他字段浅拷贝
+         *   ✅ 一致性：每个 ChangeRecord 对应一个确定的 zxid 状态
+         *  这是典型的写时复制 (Copy-on-Write) 模式在分布式系统中的应用！
+         */
         ChangeRecord duplicate(long zxid) {
             StatPersisted stat = new StatPersisted();
             if (this.stat != null) {
@@ -1811,9 +1866,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     // entry point for FinalRequestProcessor.java
     public ProcessTxnResult processTxn(Request request) {
         TxnHeader hdr = request.getHdr();
+        // Session处理
         processTxnForSessionEvents(request, hdr, request.getTxn());
 
-        final boolean writeRequest = (hdr != null);
+        final boolean writeRequest = (hdr != null);//写请求才有 hdr
         final boolean quorumRequest = request.isQuorum();
 
         // return fast w/o synchronization when we get a read

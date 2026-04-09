@@ -252,10 +252,33 @@ public class FileTxnSnapLog {
      */
     public long restore(DataTree dt, Map<Long, Integer> sessions, PlayBackListener listener) throws IOException {
         long snapLoadingStartTime = Time.currentElapsedTime();
-        //将数据恢复到 DataTree 和 sessions 中
+        //将数据恢复到 DataTree 和 sessions 中 这个处理的是快照文件
         long deserializeResult = snapLog.deserialize(dt, sessions);
         ServerMetrics.getMetrics().STARTUP_SNAP_LOAD_TIME.add(Time.currentElapsedTime() - snapLoadingStartTime);
         FileTxnLog txnLog = new FileTxnLog(dataDir);
+
+        /**
+         * 用于判断是否可以信任空的数据库状态，主要涉及 ZooKeeper 参与集群投票的资格问题。
+         * 工作流程：
+         *  检查初始化标记文件 (第 260 行)
+         *      在数据目录的父目录下查找名为 initialize 的文件
+         *      这个文件是一个标记文件，用于指示这是一个新初始化的节点
+         *  删除并检查文件是否存在 (第 261 行)
+         *      Files.deleteIfExists() 会尝试删除该文件，如果文件存在则返回 true
+         *      这是一种"一次性"标记的使用方式
+         *  设置信任标志 (第 263 和 265 行)
+         *      如果找到初始化文件：trustEmptyDB = true
+         *          表示这是一个新初始化的节点
+         *          即使是空数据库，也可以参与集群投票
+         *          因为新节点本身就是空的，这是正常状态
+         *      如果没有初始化文件：trustEmptyDB = autoCreateDB
+         *          依赖 autoCreateDB 配置参数
+         *          如果是现有节点出现空数据库，可能是数据丢失，需要谨慎处理
+         *  这个机制确保了：
+         *       ✅ 新加入的节点可以正常参与集群，即使它的数据是空的
+         *      ⚠️ 已有节点如果是空数据库（可能是故障导致），需要根据配置决定是否允许参与投票
+         * 这有助于防止数据已损坏或丢失的节点错误地参与集群决策，同时允许新节点正常加入集群。
+         */
         boolean trustEmptyDB;
         File initFile = new File(dataDir.getParent(), "initialize");
         if (Files.deleteIfExists(initFile.toPath())) {
@@ -266,6 +289,7 @@ public class FileTxnSnapLog {
         }
 
         RestoreFinalizer finalizer = () -> {
+            //这个读取的是log文件
             long highestZxid = fastForwardFromEdits(dt, sessions, listener);
             // The snapshotZxidDigest will reset after replaying the txn of the
             // zxid in the snapshotZxidDigest, if it's not reset to null after
@@ -282,12 +306,13 @@ public class FileTxnSnapLog {
             return highestZxid;
         };
 
-        if (-1L == deserializeResult) {
+        if (-1L == deserializeResult) {//没有快照文件来初始化
             /* this means that we couldn't find any snapshot, so we need to
              * initialize an empty database (reported in ZOOKEEPER-2325) */
-            if (txnLog.getLastLoggedZxid() != -1) {
+            if (txnLog.getLastLoggedZxid() != -1) {//获取到最新的一个zxid
                 // ZOOKEEPER-3056: provides an escape hatch for users upgrading
                 // from old versions of zookeeper (3.4.x, pre 3.5.3).
+                // 没有快照也没有log
                 if (!trustEmptySnapshot) {
                     throw new IOException(EMPTY_SNAPSHOT_WARNING + "Something is broken!");
                 } else {
@@ -329,6 +354,7 @@ public class FileTxnSnapLog {
         DataTree dt,
         Map<Long, Integer> sessions,
         PlayBackListener listener) throws IOException {
+
         TxnIterator itr = txnLog.read(dt.lastProcessedZxid + 1);
         long highestZxid = dt.lastProcessedZxid;
         TxnHeader hdr;

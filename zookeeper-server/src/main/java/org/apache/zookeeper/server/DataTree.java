@@ -166,14 +166,15 @@ public class DataTree {
     private final ReferenceCountedACLCache aclCache = new ReferenceCountedACLCache();
 
     // The maximum number of tree digests that we will keep in our history
+    // 历史摘要记录的最大数量（循环队列）
     public static final int DIGEST_LOG_LIMIT = 1024;
 
     // Dump digest every 128 txns, in hex it's 80, which will make it easier
-    // to align and compare between servers.
+    // to align and compare between servers. 每 128 个事务记录一次摘要（选择 128 是因为 16 进制是 0x80，便于对齐和比较）
     public static final int DIGEST_LOG_INTERVAL = 128;
 
     // If this is not null, we are actively looking for a target zxid that we
-    // want to validate the digest for
+    // want to validate the digest for 快照文件保存时的最后事务 ID
     private ZxidDigest digestFromLoadedSnapshot;
 
     // The digest associated with the highest zxid in the data tree.
@@ -440,6 +441,44 @@ public class DataTree {
      *            A Stat object to store Stat output results into.
      * @throws NodeExistsException
      * @throws NoNodeException
+     *
+     * 主要流程
+     *  1. 解析路径
+     *   提取父节点路径 (parentName) 和子节点名称 (childName)
+     *   创建节点的统计信息对象
+     *  2. 检查父节点
+     *   获取父节点，如果不存在则抛出 NoNodeException点
+     *  3. 加锁执行创建（同步块）
+     *   synchronized (parent) {
+     *     a. 获取父节点的 ACL
+     *     b. 将 ACL 添加到缓存（避免模糊快照同步时的竞态条件）
+     *     c. 检查子节点是否已存在，存在则抛出 NodeExistsException
+     *     d. 通知节点即将变化 (nodes.preChange)
+     *     e. 更新父节点的 cversion 和 pzxid
+     *        - 只有当新的 cversion 更大时才更新（处理事务重放场景）
+     *     f. 创建新 DataNode 并添加到父节点的 children
+     *     g. 通知节点已变化 (nodes.postChange)
+     *     h. 更新节点数据大小统计
+     *     i. 根据 ephemeralOwner 处理临时节点类型：
+     *        - CONTAINER → 加入 containers 集合
+     *        - TTL → 加入 ttls 集合
+     *        - 其他临时节点 (ephemeralOwner != 0) → 加入 ephemerals 映射
+     *     j. 如果需要，复制统计信息到 outputStat
+     *    }
+     *  4. 配额管理
+     *     如果是 quotaZookeeper 路径下的节点：
+     *         limitNode → 添加路径到配额树
+     *         statNode → 更新配额统计
+     *     更新相关配额节点的数据量和节点数统计
+     *  5. 触发监听器
+     *    触发新节点本身的 NodeCreated 监听
+     *    触发父节点的 NodeChildrenChanged 监听
+     * 关键设计点
+     *  线程安全：使用 synchronized(parent) 保证对父节点操作的原子性
+     *  ACL 缓存优先：先添加 ACL 到缓存，避免模糊快照同步时的竞态
+     *  版本保护：通过 cversion 检查防止事务重放时覆盖更新的值
+     *  临时节点分类：根据 ephemeralOwner 区分容器、TTL、普通临时节点
+     *  配额追踪：自动更新路径相关的配额统计信息
      */
     public void createNode(final String path, byte[] data, List<ACL> acl, long ephemeralOwner, int parentCVersion, long zxid, long time, Stat outputStat) throws KeeperException.NoNodeException, KeeperException.NodeExistsException {
         int lastSlash = path.lastIndexOf('/');
@@ -473,6 +512,22 @@ public class DataTree {
             }
 
             nodes.preChange(parentName, parent);
+            /**
+             * 在 ZooKeeper 中，parentCVersion 参数表示创建子节点时父节点应该具有的版本号。
+             *  这个值在不同场景下有不同的含义：
+             *    1. 正常客户端请求（parentCVersion != -1）
+             *     当客户端发起创建节点请求时，会传入它期望的父节点 cversion
+             *     ZooKeeper 会检查这个版本是否匹配，确保并发安全
+             *     此时直接使用传入的值进行验证
+             *    2. 事务重放/恢复场景（parentCVersion == -1）
+             *     当从快照或事务日志恢复数据时，需要重放创建节点的事务
+             *     此时传入的 parentCVersion 为 -1，表示"使用当前父节点的实际版本"
+             *     系统会自动获取父节点当前的 cversion 并递增
+             * 为什么要这样设计？
+             *   灵活性：同一个方法既处理客户端请求，也处理内部事务重放
+             *   幂等性：在模糊快照同步时，可能需要重放已存在节点的事务，自动获取当前版本可以正确更新
+             *   向后兼容：旧版本的事务可能没有包含 parentCVersion，用 -1 作为默认值
+             */
             if (parentCVersion == -1) {
                 parentCVersion = parent.stat.getCversion();
                 parentCVersion++;
@@ -482,7 +537,7 @@ public class DataTree {
             // exist in the snapshot, so replay the creation might revert the
             // cversion and pzxid, need to check and only update when it's
             // larger.
-            if (parentCVersion > parent.stat.getCversion()) {
+            if (parentCVersion > parent.stat.getCversion()) {// 确保只在版本更大时才更新，防止回退。
                 parent.stat.setCversion(parentCVersion);
                 parent.stat.setPzxid(zxid);
             }
@@ -491,6 +546,7 @@ public class DataTree {
             nodes.postChange(parentName, parent);
             nodeDataSize.addAndGet(getNodeSize(path, child.data));
             nodes.put(path, child);
+
             EphemeralType ephemeralType = EphemeralType.get(ephemeralOwner);
             if (ephemeralType == EphemeralType.CONTAINER) {
                 containers.add(path);
@@ -506,6 +562,7 @@ public class DataTree {
                     list.add(path);
                 }
             }
+            //这个是对外暴露的Stat
             if (outputStat != null) {
                 child.copyStat(outputStat);
             }
@@ -568,7 +625,6 @@ public class DataTree {
             nodes.postChange(parentName, parent);
         }
 
-        // 1.先处理父节点 2.处理子节点
         DataNode node = nodes.get(path);
         if (node == null) {
             throw new KeeperException.NoNodeException();
@@ -587,6 +643,7 @@ public class DataTree {
         List<ACL> parentAcl;
         synchronized (parent) {
             parentAcl = getACL(parent);
+
             long eowner = node.stat.getEphemeralOwner();
             EphemeralType ephemeralType = EphemeralType.get(eowner);
             if (ephemeralType == EphemeralType.CONTAINER) {
@@ -853,6 +910,7 @@ public class DataTree {
 
     }
 
+    //DataTree 已处理的最后一个 zxid
     public volatile long lastProcessedZxid = 0;
 
     public ProcessTxnResult processTxn(TxnHeader header, Record txn, TxnDigest digest) {
@@ -1069,9 +1127,45 @@ public class DataTree {
          *
          * Note, such failures on DT should be seen only during
          * restore.
+         *
+         * 这段代码处理的是 ZooKeeper 事务恢复时的一个特殊场景，主要解决在重放事务日志时遇到的 NODEEXISTS 错误。
+         * 这个逻辑会在以下复杂场景中被触发：
+         *   子节点因会话关闭被删除
+         *   之后又在不同的全局会话中被重新创建
+         *   此时父节点被序列化到快照中
+         *   恢复时重放创建节点的事务，因为节点属于不同的会话，不会再被删除
+         *   结果：重放创建事务时报 NODEEXISTS 错误
+         * 解决方案
+         *  当遇到这种情况时，代码会：
+         *   提取父节点路径：从完整路径中截取父节点部分
+         *       例如：/a/b/c → 父节点是 /a/b
+         *   更新父节点的 cversion 和 pzxid：
+         *       cversion：子节点版本号
+         *       pzxid：最后修改子节点的 zxid
+         *       使用事务中记录的 parentCVersion 和当前的 zxid
+         * 为什么这样做？
+         *  这是一个数据一致性修复机制：
+         *   问题：快照和事务日志之间的状态不一致
+         *   解决：强制更新父节点的元数据，使其与当前实际状态匹配
+         *   适用范围：只在**恢复（restore）**期间出现，正常运行时不会遇到
+         * 示例说明
+         *  时间线：
+         *   1. 会话 A 创建 /node1（cversion=1）
+         *   2. 会话 A 关闭，/node1 被删除
+         *   3. 会话 B 创建 /node1（cversion=2）
+         *   4. 此时对父节点做快照（cversion 还是 1）
+         *   5. 服务器宕机
+         *
+         *  恢复时：
+         *   - 加载快照：父节点 cversion=1
+         *   - 重放事务：创建 /node1（期望 cversion=2）
+         *   - 发现不匹配 → NODEEXISTS 错误
+         *   - 执行这段代码：将父节点 cversion 更新为 2
+         * 这样就解决了快照和事务日志之间的元数据不一致问题。
          */
         if (header.getType() == OpCode.create && rc.err == Code.NODEEXISTS.intValue()) {
             LOG.debug("Adjusting parent cversion for Txn: {} path: {} err: {}", header.getType(), rc.path, rc.err);
+            // 调整父节点的 cversion
             int lastSlash = rc.path.lastIndexOf('/');
             String parentName = rc.path.substring(0, lastSlash);
             CreateTxn cTxn = (CreateTxn) txn;
@@ -1120,9 +1214,11 @@ public class DataTree {
             }
 
             if (digestFromLoadedSnapshot != null) {
+                // 正在从快照恢复，先校验摘要
                 compareSnapshotDigests(rc.zxid);
             } else {
                 // only start recording digest when we're not in fuzzy state
+                // 正常运行状态，记录摘要到历史队列
                 logZxidDigest(rc.zxid, getTreeDigest());
             }
         }
@@ -1140,23 +1236,84 @@ public class DataTree {
         killSession(session, zxid, ephemerals.remove(session), null);
     }
 
+    /**
+     * 当会话（session）失效时，清理该会话创建的所有临时节点（ephemeral nodes）
+     * session: 失效的会话 ID
+     * zxid: 事务 ID，用于记录删除操作
+     * paths2DeleteLocal: 本地内存中记录的该会话的临时节点路径集合
+     * paths2DeleteInTxn: 事务日志/快照中记录的待删除路径列表
+     *
+     * 为什么需要两个参数？
+     *   场景 1：正常会话关闭
+     *   // CloseSessionTxn 处理时
+     *   killSession(sessionId, header.getZxid(),
+     *     ephemerals.remove(sessionId),      // paths2DeleteLocal: 从内存获取
+     *     ((CloseSessionTxn) txn).getPaths2Delete());  // paths2DeleteInTxn:从事务获取
+     *  场景 2：简化调用
+     *   // 其他场景（如测试、清理死会话）
+     *   killSession(session, zxid, ephemerals.remove(session), null);
+     *   // paths2DeleteInTxn = null
+     *
+     * 这是一个**双重保障**机制，用于处理不同场景下的数据一致性：
+     * | 参数 | 来源 | 作用 |
+     * |------|------|------|
+     * | `paths2DeleteLocal` | 内存中的 `ephemerals` 映射 | 当前会话创建的临时节点（实时记录） |
+     * | `paths2DeleteInTxn` | `CloseSessionTxn` 事务对象 | 事务日志中记录的待删除节点（持久化记录） |
+     *
+     * 在分布式系统中，可能出现：
+     *  内存丢失：服务器重启后，ephemerals 可能不完整
+     *  事务滞后：某些临时节点的创建可能在模糊快照范围内，还未持久化到事务日志
+     *  所以需要同时检查两个数据源，确保不遗漏任何临时节点。
+     *
+     * ## 实际示例
+     *
+     * 假设会话 `0x123` 创建了 3 个临时节点：
+     * - `/node1` - 已提交到事务日志
+     * - `/node2` - 已提交到事务日志
+     * - `/node3` - 刚创建，还在内存中，未提交
+     *
+     * **关闭会话时**：
+     * ```java
+     * paths2DeleteInTxn = ["/node1", "/node2"]  // 从事务获取
+     * paths2DeleteLocal   = ["/node1", "/node2", "/node3"]  // 从内存获取
+     *
+     * 执行流程：
+     * 1. 先删除 ["/node1", "/node2"]（基于事务）
+     * 2. 从 local 中移除已处理的：local 变为 ["/node3"]
+     * 3. 打印警告（发现有额外节点）
+     * 4. 删除 ["/node3"]（基于内存）
+     * ```
+     * 这样就确保了**所有临时节点都被清理**，无论是已持久化的还是仅在内存中的。
+     */
     void killSession(long session, long zxid, Set<String> paths2DeleteLocal,
             List<String> paths2DeleteInTxn) {
+        //1. 优先处理事务中的节点
+        // 如果事务中记录了要删除的节点，先执行这些删除。这确保了事务的一致性。
         if (paths2DeleteInTxn != null) {
             deleteNodes(session, zxid, paths2DeleteInTxn);
         }
+        // 这确保了基于事务日志的恢复场景中，节点被正确删除
 
+        // 2. 检查是否还有需要处理的节点 如果本地没有记录任何临时节点，直接返回。
         if (paths2DeleteLocal == null) {
             return;
         }
+        // 说明这个会话没有创建任何临时节点
 
+        // 3. 去重处理
+        // 关键逻辑：
+        //   从 paths2DeleteLocal 中移除已经在 paths2DeleteInTxn 中处理过的路径
+        //   避免重复删除同一个节点（性能优化）
+        //   如果还有剩余路径，记录警告日志（理论上不应该发生）
         if (paths2DeleteInTxn != null) {
             // explicitly check and remove to avoid potential performance
             // issue when using removeAll
             for (String path: paths2DeleteInTxn) {
-                paths2DeleteLocal.remove(path);
+                paths2DeleteLocal.remove(path);// 移除已处理的节点
             }
             if (!paths2DeleteLocal.isEmpty()) {
+                // 警告：本地有额外节点不在事务中
+                // 这可能发生在模糊快照同步期间
                 LOG.warn(
                     "Unexpected extra paths under session {} which are not in txn 0x{}",
                     paths2DeleteLocal,
@@ -1164,6 +1321,7 @@ public class DataTree {
             }
         }
 
+        // 4. 删除剩余节点 删除本地记录但不在事务中的节点。
         deleteNodes(session, zxid, paths2DeleteLocal);
     }
 
@@ -1692,10 +1850,90 @@ public class DataTree {
 
     /**
      * Add the digest to the historical list, and update the latest zxid digest.
+     *
+     * 该方法的作用是：
+     *   记录事务摘要历史：将每个 zxid（事务 ID）对应的数据树摘要值保存到历史记录中
+     *   周期性打点：每隔一定间隔（默认每 128 个事务）保存一次摘要快照
+     *   为数据校验提供依据：后续可以通过对比摘要值来检测数据是否损坏或不一致
+     *
+     *  1️⃣ 正常运行阶段：
+     *  事务执行 → 数据树变更 → 计算新 digest → logZxidDigest()
+     *                                     ↓
+     *                     每 128 个事务保存一次 digest 快照
+     *                                     ↓
+     *                         保存在 digestLog 循环队列中
+     *  2️⃣ 快照持久化阶段
+     *  创建快照时 → serializeZxidDigest()
+     *           ↓
+     *  将最新的 digest 写入快照文件
+     * （包含：zxid + digestVersion + digest 值）
+     *
+     * 3️⃣ 恢复校验阶段
+     *  加载快照 → deserializeZxidDigest()
+     *          ↓
+     *  读取快照中的 digest 信息
+     *          ↓
+     *  重放事务日志 → compareSnapshotDigests()
+     *             ↓
+     *         到达快照 zxid 时，比较实际 digest 与快照 digest
+     *             ↓
+     *         ✅ 一致 → 数据完整
+     *         ❌ 不一致 → 报告数据损坏
+     *
+     * 这个机制主要用于检测：
+     * | 问题类型 | 说明 |
+     * |---------|------|
+     * | **磁盘损坏** | 存储介质故障导致数据位翻转 |
+     * | **软件 Bug** | 代码缺陷导致数据计算错误 |
+     * | **硬件故障** | 内存 ECC 错误、CPU 计算错误等 |
+     * | **网络传输错误** | Leader-Follower 同步时的数据损坏 |
+     * | **并发问题** | 多线程竞争导致的状态不一致 |
+     *
+     * 假设一个典型场景：
+     * 时间线：
+     * T1: Server A 正常运行
+     *     - 执行事务 zxid=0x1000, digest=0xABCD
+     *     - 执行事务 zxid=0x1001, digest=0xEF01
+     *     - ...
+     *     - 执行事务 zxid=0x1080 (128 的倍数), 记录 digest 到 digestLog
+     *
+     * T2: Server A 创建快照
+     *     - 序列化数据树
+     *     - 调用 serializeZxidDigest() 将当前 digest 写入快照
+     *
+     * T3: Server A 宕机
+     *
+     * T4: Server B 恢复数据
+     *     - 加载快照，读取 digest=0xWXYZ
+     *     - 重放事务日志
+     *     - 当重放到 zxid=0x1080 时：
+     *       * 计算当前实际 digest
+     *       * 调用 compareSnapshotDigests()
+     *       * ✅ 如果匹配 → 继续
+     *       * ❌ 如果不匹配 → 触发告警，通知管理员
+     *
+     * ⚙️ 设计亮点
+     *  低开销：不是每个事务都记录，而是每 128 个事务记录一次（DIGEST_LOG_INTERVAL = 128）
+     *  循环队列：保持最近 1024 条记录（DIGEST_LOG_LIMIT = 1024），避免内存无限增长
+     *  版本控制：包含 digestVersion 字段，支持摘要算法升级兼容
+     *  双重校验：
+     *   快照恢复时校验（compareSnapshotDigests）
+     *   事务日志重放时校验（compareDigest）
+     *  速率限制日志：使用 RateLogger 避免重复错误刷屏（15 分钟间隔）
+     *
+     * logZxidDigest 是 ZooKeeper 数据完整性保护体系的关键组件，它通过：
+     *   ✅ 周期性记录数据树摘要快照
+     *   ✅ 持久化到快照文件
+     *   ✅ 恢复时校验确保数据一致性
+     *   ✅ 实时检测硬件/软件故障导致的数据损坏
+     * 这是一个典型的用空间换安全的设计，以极小的性能开销（每 128 个事务记录一次）提供了强大的数据完整性保障能力。
      */
     private void logZxidDigest(long zxid, long digest) {
+        // ① 创建摘要记录对象（包含 zxid、摘要版本、摘要值）
         ZxidDigest zxidDigest = new ZxidDigest(zxid, digestCalculator.getDigestVersion(), digest);
+        // ② 更新最新的摘要记录
         lastProcessedZxidDigest = zxidDigest;
+        // ③ 周期性记录：每 DIGEST_LOG_INTERVAL (128) 个事务保存一次
         if (zxidDigest.zxid % DIGEST_LOG_INTERVAL == 0) {
             synchronized (digestLog) {
                 digestLog.add(zxidDigest);
@@ -1792,23 +2030,31 @@ public class DataTree {
      * Compares the actual tree's digest with that in the snapshot.
      * Resets digestFromLoadedSnapshot after comparision.
      *
+     * 比较当前内存中数据树的摘要（digest）与从快照文件中读取的摘要是否一致
+     * 检测数据损坏、存储错误或不一致问题
+     * 校验完成后重置 digestFromLoadedSnapshot 标志
+     *
      * @param zxid zxid
      */
     public void compareSnapshotDigests(long zxid) {
+        // 条件 1：检查是否到达了快照对应的 zxid
         if (zxid == digestFromLoadedSnapshot.zxid) {
+            // 条件 2：检查摘要算法版本是否一致
             if (digestCalculator.getDigestVersion() != digestFromLoadedSnapshot.digestVersion) {
                 LOG.info(
                     "Digest version changed, local: {}, new: {}, skip comparing digest now.",
                     digestFromLoadedSnapshot.digestVersion,
                     digestCalculator.getDigestVersion());
-                digestFromLoadedSnapshot = null;
+                digestFromLoadedSnapshot = null; // 放弃校验
                 return;
             }
+            // 条件 3：核心校验 - 比较实际摘要值
             if (getTreeDigest() != digestFromLoadedSnapshot.getDigest()) {
                 reportDigestMismatch(zxid);
             }
-            digestFromLoadedSnapshot = null;
+            digestFromLoadedSnapshot = null;  // ✅ 校验完成，清空调试状态
         } else if (digestFromLoadedSnapshot.zxid != 0 && zxid > digestFromLoadedSnapshot.zxid) {
+            // 条件 4：超过了目标 zxid 但未找到对应事务
             RATE_LOGGER.rateLimitLog("The txn 0x{} of snapshot digest does not "
                     + "exist.", Long.toHexString(digestFromLoadedSnapshot.zxid));
         }
@@ -1824,18 +2070,24 @@ public class DataTree {
      *
      * @return false if digest in the txn doesn't match what we have now in
      *               the data tree
+     * 验证事务日志中存储的数据树摘要（digest）与当前实际数据树的摘要是否一致，用于检测数据损坏或不一致问题。
+     *
      */
     public boolean compareDigest(TxnHeader header, Record txn, TxnDigest digest) {
         long zxid = header.getZxid();
 
+        // 禁用摘要检查：如果系统未启用 digest 功能
+        // 无摘要信息：如果事务日志中没有存储 digest
         if (!ZooKeeperServer.isDigestEnabled() || digest == null) {
             return true;
         }
         // do not compare digest if we're still in fuzzy state
+        // 模糊状态：如果刚从 snapshot 恢复，还未完全同步到最新状态
+        // 此时数据树处于"模糊期"，digest 可能不准确
         if (digestFromLoadedSnapshot != null) {
             return true;
         }
-        // do not compare digest if there is digest version change
+        // do not compare digest if there is digest version change 版本不匹配：digest 计算算法版本不同，无法比较
         if (digestCalculator.getDigestVersion() != digest.getVersion()) {
             RATE_LOGGER.rateLimitLog("Digest version not the same on zxid.",
                     String.valueOf(zxid));
@@ -1867,9 +2119,12 @@ public class DataTree {
      * @param zxid zxid for which the error is being reported.
      */
     public void reportDigestMismatch(long zxid) {
+        // 1. 统计指标
         ServerMetrics.getMetrics().DIGEST_MISMATCHES_COUNT.add(1);
+        // 2. 限流日志
         RATE_LOGGER.rateLimitLog("Digests are not matching. Value is Zxid.", String.valueOf(zxid));
 
+        // 3. 通知所有注册的观察者
         for (DigestWatcher watcher : digestWatchers) {
             watcher.process(zxid);
         }
@@ -1937,12 +2192,13 @@ public class DataTree {
             zxid = ia.readLong("zxid");
             digestVersion = ia.readInt("digestVersion");
             // the old version is using hex string as the digest
-            if (digestVersion < 2) {
+            if (digestVersion < 2) { // 旧版本：使用十六进制字符串存储摘要
                 String d = ia.readString("digest");
                 if (d != null) {
                     digest = Long.parseLong(d, 16);
                 }
             } else {
+                // 新版本（version >= 2）：直接存储 long 值
                 digest = ia.readLong("digest");
             }
         }
